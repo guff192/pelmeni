@@ -84,6 +84,6 @@ def dispatch(tool_call: dict) -> str:
         if not isinstance(command, str) or not command.strip():
             return "error: missing or empty 'command' argument"
         result = execute_bash(command)
-        print(f"\nbash\n{result}\n\n")
+        print(f"\n── bash ──\n{result}\n")
         return result
     return f"error: unknown tool '{name}'"
