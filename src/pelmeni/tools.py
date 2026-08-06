@@ -55,6 +55,7 @@ def execute_bash(command: str) -> str:
     try:
         proc = subprocess.run(
             command,
+            check=False,
             shell=True,
             capture_output=True,
             text=True,
@@ -62,6 +63,8 @@ def execute_bash(command: str) -> str:
         )
     except subprocess.TimeoutExpired:
         return f"error: command timed out after {_TIMEOUT_SECONDS}s"
+    except subprocess.CalledProcessError as e:
+        return f"error: command finished with return code {e.returncode}"
 
     out = f"$ {command}\n"
     if proc.stdout:
