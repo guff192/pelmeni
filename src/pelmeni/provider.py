@@ -15,16 +15,24 @@ MODEL = "qwen/qwen3-8b"
 _TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 
 
+class ProviderError(Exception):
+    """LLM provider request failed."""
+
+
 def chat(messages: list[dict], tools: list[dict] | None = None) -> dict:
     """One round-trip to the chat API. Returns the raw response JSON."""
     payload: dict = {"model": MODEL, "messages": messages}
     if tools:
         payload["tools"] = tools
-    resp = httpx.post(
-        f"{BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {API_KEY}"},
-        json=payload,
-        timeout=_TIMEOUT,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp = httpx.post(
+            f"{BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json=payload,
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except (httpx.HTTPError, ValueError) as e:
+        msg = f"Provider request failed: {e}"
+        raise ProviderError(msg) from e

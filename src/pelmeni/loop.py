@@ -6,10 +6,16 @@ No SDK, no hidden machinery: every token sent to the model is visible in
 `messages` below.
 """
 
+from __future__ import annotations
+
 import sys
+from typing import TYPE_CHECKING
 
 from . import provider, tools
-from .trace import Trace
+
+if TYPE_CHECKING:
+    from .trace import Trace
+
 
 MAX_ITERATIONS = 25
 
@@ -24,7 +30,7 @@ def run(messages: list[dict], trace: Trace) -> str | None:
         trace.log("request", {"messages": messages, "tools": tools.TOOLS})
         try:
             resp = provider.chat(messages, tools.TOOLS)
-        except Exception as e:
+        except provider.ProviderError as e:
             print(f"error: LLM request failed: {e}", file=sys.stderr)
             return None
         trace.log("response", resp)
