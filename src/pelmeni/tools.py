@@ -7,27 +7,30 @@ guard — the customizable hook middleware replaces it in build step 3.
 import json
 import re
 import subprocess
+import types
 
-BASH_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "bash",
-        "description": (
-            "Run a shell command and return stdout, stderr, and exit code. "
-            "Use for file inspection, searching, and running programs."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The shell command to execute.",
-                }
+BASH_TOOL = types.MappingProxyType(
+    {
+        "type": "function",
+        "function": {
+            "name": "bash",
+            "description": (
+                "Run a shell command and return stdout, stderr, and exit code. "
+                "Use for file inspection, searching, and running programs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to execute.",
+                    }
+                },
+                "required": ["command"],
             },
-            "required": ["command"],
         },
-    },
-}
+    }
+)
 
 TOOLS = [BASH_TOOL]
 
