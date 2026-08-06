@@ -22,7 +22,7 @@ def main() -> None:
     while True:
         try:
             user = input("\n> ").strip()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             print()
             break
         if not user or user == "/exit":
