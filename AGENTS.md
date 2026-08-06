@@ -9,7 +9,7 @@ This document defines the agent structure for **pelmeni**, a multi-agent system 
 The core agent loop is ~100 lines (reference: [chebupelka](https://github.com/alexey-goloburdin/chebupelka)). SDKs hide the message list — the thing we most need to control for our minimal-context strategy — so we own the loop.
 
 **Primary Stack:**
-- **Framework**: none — agents are plain Python loops over chat completions
+- **Framework**: none — agents are plain Python loops over chat completions (see `src/pelmeni/loop.py`)
 - **Language**: Python 3.10+
 - **Tooling**: uv for package and Python version management
 - **Libraries**: httpx (LLM API calls), Pydantic (message/tool schemas, config validation), Redis (agent bus), FastAPI (only if an HTTP control plane is needed)
@@ -196,6 +196,7 @@ Every tool execution passes through a **hook middleware chain** before running. 
 - **Built-in hooks**: command blocklist (e.g. `rm -rf /`), path guards (writes restricted to the workspace), confirm-prompt (ask the user y/n before risky commands)
 - **Customization**: users add hooks in `config.toml` or as Python modules under `~/.config/pelmeni/hooks/`; ordering is explicit
 - **Applies to all tools**, but the primary motivation is governing raw `bash` access for Builder and Tester agents
+- **v1 interim**: until step 3, `tools.py` carries a small hardcoded blocklist (`rm -rf /` class)
 
 ## 🔧 Agent Communication
 
@@ -231,13 +232,27 @@ Agents communicate through Redis:
 
 Vertical slice first; each step ends with something runnable:
 
-1. **Core loop + bash tool + one agent** — works end-to-end in a terminal
+1. **Core loop + bash tool + one agent** — ✅ done (`src/pelmeni/`): multi-turn REPL session with one agent, bash tool with timeout + temp blocklist, JSONL traces per session
 2. **Provider layer + `config.toml`** — OpenAI + Anthropic + OpenAI-compatible, per-agent model routing, API keys and OAuth
 3. **Tool hooks** — middleware chain with blocklist, path guards, confirm-prompt
 4. **Tool registry + 4 agent types** — role whitelists enforced
 5. **Redis bus** — two agents talking through Pub/Sub
 6. **Context compaction** — summarize old messages when over token budget
 7. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
+
+## 📁 Project Layout
+
+```
+src/pelmeni/
+  provider.py   # raw httpx to OpenAI-compatible /chat/completions (constants for now; config.toml in step 2)
+  tools.py      # bash tool: schema, dispatch, timeout, temp blocklist guard
+  loop.py       # the agent loop: chat -> tool calls -> append -> repeat, 25-iteration cap
+  trace.py      # JSONL session traces
+  cli.py        # multi-turn REPL entry point (`uv run pelmeni`)
+```
+
+- **Sessions**: `~/.pelmeni/sessions/<project-name>/<session-hash>/trace.jsonl` — every LLM request/response and tool result
+- **Dev model**: local LM Studio server (`localhost:1234`), `qwen/qwen3-8b`; API key is a placeholder constant until step 2
 
 ## 🧠 Core Business Logic
 
