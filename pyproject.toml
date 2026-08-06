@@ -38,5 +38,7 @@ ignore = [
     "D401",         # First line should be in imperative mood
     "COM812",       # Trait conflicts with the formatter
     "ISC001",       # Trait conflicts with the formatter
+    "D203",         # Incompatible with D211 (we keep no-blank-line-before-class)
+    "D213",         # Incompatible with D212 (we keep summary-on-first-line)
 ]
 
