@@ -1,0 +1,89 @@
+"""Bash tool: schema, dispatch, and a minimal hardcoded guard.
+
+Step-1 scope: the only tool is `bash`. The blocklist below is a temporary
+guard — the customizable hook middleware replaces it in build step 3.
+"""
+
+import json
+import re
+import subprocess
+
+BASH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bash",
+        "description": (
+            "Run a shell command and return stdout, stderr, and exit code. "
+            "Use for file inspection, searching, and running programs."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The shell command to execute.",
+                }
+            },
+            "required": ["command"],
+        },
+    },
+}
+
+TOOLS = [BASH_TOOL]
+
+_TIMEOUT_SECONDS = 60
+_MAX_OUTPUT_CHARS = 30_000
+
+# Temporary guard; replaced by hook middleware in step 3.
+_BLOCKED = [
+    re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f?\s+/\s*$"),
+    re.compile(r"\brm\s+-[a-zA-Z]*f[a-zA-Z]*r?\s+/\s*$"),
+    re.compile(r"\bmkfs\b"),
+    re.compile(r"\bdd\b.*\bof=/dev/"),
+    re.compile(r":\(\)\{.*\}"),  # fork bomb
+]
+
+
+def execute_bash(command: str) -> str:
+    """Run a command, return a plain-text result for the tool message."""
+    if any(p.search(command) for p in _BLOCKED):
+        return "error: command blocked by safety guard"
+
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return f"error: command timed out after {_TIMEOUT_SECONDS}s"
+
+    out = f"$ {command}\n"
+    if proc.stdout:
+        out += proc.stdout
+    if proc.stderr:
+        out += f"\n[stderr]\n{proc.stderr}"
+    out += f"\n[exit code: {proc.returncode}]"
+    if len(out) > _MAX_OUTPUT_CHARS:
+        out = out[:_MAX_OUTPUT_CHARS] + "\n[output truncated]"
+    return out
+
+
+def dispatch(tool_call: dict) -> str:
+    """Execute one tool call from the model. Never raises."""
+    name = tool_call["function"]["name"]
+    try:
+        args = json.loads(tool_call["function"]["arguments"] or "{}")
+    except json.JSONDecodeError as e:
+        return f"error: malformed tool arguments: {e}"
+
+    if name == "bash":
+        command = args.get("command")
+        if not isinstance(command, str) or not command.strip():
+            return "error: missing or empty 'command' argument"
+        result = execute_bash(command)
+        print(f"\nbash\n{result}\n\n")
+        return result
+    return f"error: unknown tool '{name}'"

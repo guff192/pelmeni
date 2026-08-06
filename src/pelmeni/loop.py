@@ -1,0 +1,47 @@
+"""The agent loop. This is the heart of pelmeni — keep it small and readable.
+
+    call LLM -> run tool calls -> append results -> repeat
+
+No SDK, no hidden machinery: every token sent to the model is visible in
+`messages` below.
+"""
+
+import sys
+
+from . import provider, tools
+from .trace import Trace
+
+MAX_ITERATIONS = 25
+
+
+def run(messages: list[dict], trace: Trace) -> str | None:
+    """Run the loop until the model answers without tool calls.
+
+    Mutates `messages` in place (that's the point — the list IS the state).
+    Returns the final assistant text, or None if the iteration cap hit.
+    """
+    for _ in range(MAX_ITERATIONS):
+        trace.log("request", {"messages": messages, "tools": tools.TOOLS})
+        try:
+            resp = provider.chat(messages, tools.TOOLS)
+        except Exception as e:
+            print(f"error: LLM request failed: {e}", file=sys.stderr)
+            return None
+        trace.log("response", resp)
+
+        msg = resp["choices"][0]["message"]
+        messages.append(msg)
+
+        tool_calls = msg.get("tool_calls")
+        if not tool_calls:
+            return msg.get("content") or ""
+
+        for call in tool_calls:
+            result = tools.dispatch(call)
+            trace.log("tool_result", {"tool_call_id": call["id"], "result": result})
+            messages.append(
+                {"role": "tool", "tool_call_id": call["id"], "content": result}
+            )
+
+    print(f"error: iteration cap ({MAX_ITERATIONS}) reached", file=sys.stderr)
+    return None

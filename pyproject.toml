@@ -1,0 +1,19 @@
+[project]
+name = "pelmeni"
+version = "0.1.0"
+description = "Multi-agent coding system, no SDK"
+authors = [
+    { name = "Konstantin Kochetkov", email = "kochkons1@ya.ru" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.28.1",
+    "pydantic>=2.13.4",
+]
+
+[project.scripts]
+pelmeni = "pelmeni.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12.0"]
+build-backend = "uv_build"
