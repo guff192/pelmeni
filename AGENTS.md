@@ -2,6 +2,7 @@
 
 ## 🌟 Overview
 This document defines the agent structure for a multi-agent system built using pi for custom agentic workflows. The system consists of specialized agents that collaborate to automate different phases of the software development lifecycle, with a focus on minimal context and efficient tool management.
+
 ## 🔧 Technology Stack
 
 ### Selected Approach: Python with LangGraph
@@ -12,6 +13,7 @@ The system uses Python with LangGraph as the foundation for building custom agen
 - **Language**: Python 3.10+
 - **Libraries**: pi SDK, LangChain, FastAPI, Pydantic
 - **Use Case**: General-purpose agents, rapid prototyping
+
 ## 🎯 Context Management Approach
 
 ### Minimal Context Strategy
@@ -31,6 +33,7 @@ The system implements a minimal context approach to prevent context overflow:
 - **Granular Tool Access**: Tools are assigned to agents based on their role and requirements
 - **Role-Based Access**: Different agent types have access to different tool sets
 - **Dynamic Tool Loading**: Tools are loaded dynamically as needed
+
 ## 🔄 Decision Rationale
 
 ### Why Python with LangGraph
@@ -50,6 +53,7 @@ The decision to use Python with LangGraph for custom agentic workflows was based
 - **Rapid Prototyping**: Faster iteration and testing cycles
 - **Debugging Tools**: Better debugging and monitoring capabilities
 - **Community Support**: Larger community and more resources available
+
 ## 📚 Libraries and Frameworks
 
 ### Core Agent Development Libraries
