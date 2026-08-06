@@ -13,6 +13,7 @@ SYSTEM_PROMPT = (
 
 
 def main() -> None:
+    """Run the pelmeni REPL session."""
     trace = Trace(Path.cwd())
     messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
     print(f"pelmeni | model: {provider.MODEL} @ {provider.BASE_URL}")

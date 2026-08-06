@@ -16,9 +16,13 @@ SESSIONS_ROOT = Path.home() / ".pelmeni" / "sessions"
 
 
 class Trace:
+    """JSONL session trace writer."""
+
     def __init__(self, cwd: Path):
         project = cwd.resolve().name or "root"
-        session_id = sha256(f"{time.time()}-{uuid.uuid4()}".encode()).hexdigest()[:8]
+        session_id = sha256(
+            f"{time.time()}-{uuid.uuid4()}".encode()
+        ).hexdigest()[:8]
         self.dir = SESSIONS_ROOT / project / session_id
         self.dir.mkdir(parents=True, exist_ok=True)
         self.file = self.dir / "trace.jsonl"

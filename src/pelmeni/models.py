@@ -43,7 +43,7 @@ class UserMessage(BaseModel):
 
 
 class AssistantMessage(BaseModel):
-    """Mirroring loop.py:30-35 structure, allowing empty content for tool calls."""
+    """Mirroring loop.py structure, allowing empty content for tool calls."""
 
     role: Literal["assistant"]
     content: str | None = None

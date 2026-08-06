@@ -38,9 +38,26 @@ def run(messages: list[dict], trace: Trace) -> str | None:
 
         for call in tool_calls:
             result = tools.dispatch(call)
-            trace.log("tool_result", {"tool_call_id": call["id"], "result": result})
+            trace.log("tool_result", {
+                "tool_call_id": call["id"],
+                "result": result,
+            })
             messages.append(
-                {"role": "tool", "tool_call_id": call["id"], "content": result}
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "content": result,
+                }
+            )
+            trace.log(
+                "tool_result", {"tool_call_id": call["id"], "result": result}
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "content": result,
+                }
             )
 
     print(f"error: iteration cap ({MAX_ITERATIONS}) reached", file=sys.stderr)
