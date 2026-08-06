@@ -1,18 +1,73 @@
-# 🤖 Multi-Agent System - Technical Documentation
+# 🤖 pelmeni - Multi-Agent System Technical Documentation
 
 ## 🌟 Overview
-This document defines the agent structure for a multi-agent system built using pi for custom agentic workflows. The system consists of specialized agents that collaborate to automate different phases of the software development lifecycle, with a focus on minimal context and efficient tool management.
+This document defines the agent structure for **pelmeni**, a multi-agent system built from scratch in Python — no agent SDKs. Each agent is a simple loop over a chat-completions API with role-scoped tools. Specialized agents collaborate to automate different phases of the software development lifecycle, with a focus on minimal context and efficient tool management.
 
 ## 🔧 Technology Stack
 
-### Selected Approach: Python with LangGraph
-The system uses Python with LangGraph as the foundation for building custom agentic workflows with pi, providing a robust and flexible platform for multi-agent collaboration.
+### Selected Approach: From Scratch, No Agent SDK
+The core agent loop is ~100 lines (reference: [chebupelka](https://github.com/alexey-goloburdin/chebupelka)). SDKs hide the message list — the thing we most need to control for our minimal-context strategy — so we own the loop.
 
 **Primary Stack:**
-- **Framework**: LangGraph for agent orchestration
+- **Framework**: none — agents are plain Python loops over chat completions
 - **Language**: Python 3.10+
-- **Libraries**: pi SDK, LangChain, FastAPI, Pydantic
+- **Tooling**: uv for package and Python version management
+- **Libraries**: httpx (LLM API calls), Pydantic (message/tool schemas, config validation), Redis (agent bus), FastAPI (only if an HTTP control plane is needed)
 - **Use Case**: General-purpose agents, rapid prototyping
+
+## 🔌 LLM Provider Layer
+
+Provider abstraction, not one API. Agents never see providers — they request a model by alias; a router resolves alias → provider + credentials.
+
+### Provider Interface
+Each provider is a small client module implementing one interface: `chat(messages, tools, model) -> response`.
+- **v1 providers**: OpenAI, Anthropic, Google, plus a generic OpenAI-compatible client (covers Ollama, vLLM, LM Studio, OpenRouter)
+- **Auth**: per-provider entry in `~/.config/pelmeni/credentials.toml` (permissions `0600`) with a `type` discriminator; OAuth tokens refreshed automatically
+- **Precedence**: env var override (`PELMENI_<PROVIDER>_API_KEY`) → `credentials.toml` → fail fast with a clear "run `pelmeni auth login <provider>`" message
+- Credentials never committed; config validated at startup with Pydantic — wrong model alias or missing auth fails fast, not mid-task
+
+### Credentials
+`~/.config/pelmeni/credentials.toml` — separate from `config.toml` so the routing config stays shareable/committable. Each entry is a Pydantic discriminated union on `type`:
+
+```toml
+[openai]
+type = "api_key"
+api_key = "sk-..."
+
+[anthropic]
+type = "oauth"
+access_token = "..."
+refresh_token = "..."
+expires_at = 1767225600          # unix timestamp; refreshed automatically
+
+[local]                          # openai-compatible, no auth
+type = "none"
+```
+
+Rules:
+- `type` is `Literal["api_key", "oauth", "none"]`; each entry validates against its own schema
+- `type = "none"` is explicit for auth-less servers (Ollama etc.) — an absent section means "not configured"
+- OAuth entries are machine-managed (written by the device flow, never hand-edited); API-key entries are user-managed
+- New auth kinds (e.g. AWS SigV4) are added as new `type` variants without breaking existing files
+
+### Configuration
+Single user-editable `config.toml` (safe to commit — no secrets):
+
+```toml
+[models]
+planner = "anthropic:claude-sonnet-4"     # alias → provider:model
+worker  = "openai:gpt-5-mini"
+local   = "openai-compatible:qwen3@http://localhost:11434/v1"
+
+[agents]
+investigator.model = "local"      # read-only search: cheap/local model
+builder.model      = "worker"
+reviewer.model     = "planner"
+tester.model       = "worker"
+```
+
+Rules:
+- Per-agent model choice is one line; unset agents fall back to a global default
 
 ## 🎯 Context Management Approach
 
@@ -36,51 +91,44 @@ The system implements a minimal context approach to prevent context overflow:
 
 ## 🔄 Decision Rationale
 
-### Why Python with LangGraph
-The decision to use Python with LangGraph for custom agentic workflows was based on several factors:
+### Why No Agent SDK
+The decision to build the agent loop from scratch (no LangGraph, no pi SDK) was based on several factors:
 
 #### Clarity and Simplicity
-- **Clearer Tooling**: pi provides more straightforward tools for building custom workflows
-- **Flexible Architecture**: Easier to customize and extend for specific use cases
-- **Better Documentation**: More comprehensive documentation for custom implementations
+- **The loop is small**: call LLM → run tool calls → append results → repeat. ~100 lines, fully owned
+- **No hidden machinery**: every token sent to the model is visible and controllable
+- **Model-agnostic**: any OpenAI-compatible or provider-native API works behind our thin provider layer
 
 #### Context Management
-- **Efficient Context Handling**: pi's token-efficient context compaction features
-- **Overflow Prevention**: Built-in mechanisms for preventing context overflow
-- **Summarization Capabilities**: Automatic context summarization and checkpointing
+- **Byte-level control**: minimal context is our core design principle; SDKs hide exactly the message list we need to manage
+- **Own summarization**: context compaction implemented explicitly, tuned per agent role
+- **No format lock-in**: SDK message formats would couple agents to a vendor's abstraction
+
+#### Why Not LangGraph Specifically
+- LangGraph orchestrates *steps inside one agent* (branching, pause/resume, durable checkpoints)
+- Our coordination is *between agents* via a message queue — a different problem a graph framework doesn't solve
+- **Escape hatch**: if a single agent later grows complex branching control flow, LangGraph can be adopted inside that agent only, without rewriting the system
 
 #### Development Experience
-- **Rapid Prototyping**: Faster iteration and testing cycles
-- **Debugging Tools**: Better debugging and monitoring capabilities
-- **Community Support**: Larger community and more resources available
+- **Fewer dependencies**: httpx + Pydantic + Redis is the whole runtime
+- **Easy debugging**: plain Python loop, plain logs — no framework internals to trace
+- **Learning value**: the team understands every line of the system
 
 ## 📚 Libraries and Frameworks
 
-### Core Agent Development Libraries
-- **LangGraph**: Primary framework for agent orchestration and workflow management
-- **LangChain**: Advanced agent workflows, chains, and tool integration
-- **Pydantic AI**: Data validation, settings management, and structured output handling
-
-### Message Queue Integration
-- **Redis Pub/Sub**: Lightweight pub/sub messaging for agent communication
-- **RabbitMQ/Pika**: Robust message queue system with Python client
-- **Apache Kafka**: Distributed event streaming platform
-- **Celery**: Distributed task queue with scheduling capabilities
+### Core Libraries
+- **httpx**: Async HTTP client for LLM provider APIs
+- **Pydantic**: Message/tool schemas, structured output, config validation
+- **redis-py**: Agent bus (Pub/Sub) and shared state
 
 ### Testing and Validation
-- **Pytest**: Comprehensive testing framework for agent functionality
-- **LangSmith Evaluations**: Agent performance evaluation and benchmarking
-- **LangChain Evaluators**: Specialized testing for agent workflows
+- **Pytest**: Test framework for agent functionality and tool contracts
+- **JSONL trace logs**: Every LLM request/response logged per agent run — observability without SDK lock-in
 
-### OpenMP/Parallel Computing
-- **pyomp/OMP4Py**: Python bindings for OpenMP parallel processing
-- **Numba + OpenMP**: JIT compilation with OpenMP support for performance-critical agents
-- **Python 3.13+ GIL Optional**: Native multi-threading capabilities in newer Python versions
-
-### Extensions and Tools
-- **LangGraph Visualizer**: Graph visualization for agent workflows
-- **LangSmith**: Monitoring, debugging, and analytics platform
-- **Community Plugins**: Various plugins for extended functionality
+### Deferred (adopt only when a real need appears)
+- **RabbitMQ/Kafka**: If Redis Pub/Sub hits delivery-guarantee limits
+- **LangSmith**: If JSONL traces become insufficient for evaluation
+- **FastAPI**: If an HTTP control plane is needed
 
 ## 🗺️ Development Phases
 
@@ -118,19 +166,21 @@ The decision to use Python with LangGraph for custom agentic workflows was based
 
 ## 🛠️ Agent Types
 
+An agent is exactly two things: a **system prompt** and a **tool whitelist**. Roles below differ only in those two fields; the loop, provider layer, and bus wiring are shared. Tool access is enforced by the tool registry, not by convention.
+
 ### Investigator Agent
 **Role**: Locates code, identifies patterns, finds definitions and references
-**Tools**: grep, glob, lsp, read
+**Tools**: grep, glob, lsp, read (read-only)
 **Output Format**: File-path-first, line-number-attached findings with backticked symbols
 
 ### Builder Agent
 **Role**: Makes surgical edits to 1-2 files, implements features
-**Tools**: edit, write, bash (limited)
+**Tools**: edit, write, bash (raw shell, governed by tool hooks — see below)
 **Output Format**: Concise change descriptions with verification status
 
 ### Reviewer Agent
 **Role**: Reviews code for bugs, quality issues, and improvement opportunities
-**Tools**: read, grep, lsp
+**Tools**: read, grep, lsp (read-only)
 **Output Format**: Issue findings with severity levels and suggested fixes
 
 ### Tester Agent
@@ -138,52 +188,56 @@ The decision to use Python with LangGraph for custom agentic workflows was based
 **Tools**: bash, write, read
 **Output Format**: Test results with pass/fail status and coverage metrics
 
+## 🪝 Tool Hooks
+
+Every tool execution passes through a **hook middleware chain** before running. Hooks are a documented, user-customizable interface — not hardcoded checks.
+
+- **Interface**: `hook(tool_call, context) -> allow | deny | modify`
+- **Built-in hooks**: command blocklist (e.g. `rm -rf /`), path guards (writes restricted to the workspace), confirm-prompt (ask the user y/n before risky commands)
+- **Customization**: users add hooks in `config.toml` or as Python modules under `~/.config/pelmeni/hooks/`; ordering is explicit
+- **Applies to all tools**, but the primary motivation is governing raw `bash` access for Builder and Tester agents
+
 ## 🔧 Agent Communication
 
-Agents communicate through a message queue system:
-1. **Message Queue**: RabbitMQ or Kafka for reliable message delivery
-2. **Shared State**: Central knowledge base accessible to all agents
-3. **Direct Messaging**: Agent-to-agent communication via hub tool
-4. **Tool Results**: Output from one agent becomes input to another
-### Message Queue Implementation
-- **Protocol**: AMQP 1.0 for interoperability
-- **Topics**: Separate topics for different message types
-- **Durability**: Persistent messages for reliability
-- **Security**: TLS encryption and authentication
+Agents communicate through Redis:
+
+1. **Message Bus**: Redis Pub/Sub for agent-to-agent and orchestrator-to-agent messaging
+2. **Shared State**: Redis keys as the shared knowledge base (task results, artifacts, status)
+3. **Tool Results**: Output of one agent becomes input to another via bus messages
+
+### Bus Implementation
+- **Channels**: separate channels per message type (tasks, results, status)
+- **Durability**: task queues persisted as Redis lists; Pub/Sub for ephemeral status
+- **Scale-out options (later)**: RabbitMQ/Kafka, TLS, multi-machine — only if Redis limits are hit
+
 ## 🚀 Deployment
 
-### Hybrid Deployment Approach
-The system supports a hybrid deployment model:
+### Local-First
+- **Environment**: Developer machines
+- **Topology**: Orchestrator + agent processes on one machine; Redis via Docker Compose
+- **Management**: `docker compose up` for Redis, `uv run` for agents
+- **Use Case**: Development, testing, and normal operation
 
-#### Cloud Component
-- **Platform**: AWS/GCP/Azure
-- **Services**: Containerized agents with auto-scaling
-- **Management**: Kubernetes for orchestration
-- **Use Case**: Production workloads, scalable services
+### Future: Cloud
+- Containerized agents on K8s, shared Redis/ElastiCache, multi-machine scale-out — designed-for but not built in v1
 
-#### Local Component
-- **Environment**: Local development machines
-- **Services**: Lightweight agent runtime
-- **Management**: Docker Compose for local orchestration
-- **Use Case**: Development, testing, debugging
+## 📋 Agent Spawning
 
-#### Integration
-- **Communication**: Secure VPN or direct API connections
-- **Data Sync**: Periodic synchronization between cloud and local
-- **Fallback**: Local agents can operate independently when cloud is unavailable
+- **Agent definitions**: each agent = config entry (system prompt + tool whitelist + model alias); no discovery directories needed in v1
+- **Spawning**: the orchestrator process spawns agents as async tasks or subprocesses, each with isolated context and a bus connection
+- **Results**: collected by the orchestrator from the bus and synthesized into the final output
 
+## 🗺️ Build Order
 
-## 📋 Agent Discovery and Spawning
+Vertical slice first; each step ends with something runnable:
 
-Agents are discovered through:
-- Project-specific `.omp/agents` directory
-- User-specific `~/.omp/agent/agents` directory
-- Bundled agents (scout, builder, reviewer, tester, etc.)
-
-Spawning mechanism:
-- Main thread uses `task` tool with `tasks[]` batch for parallel execution
-- Each agent gets isolated context with shared communication channels
-- Results are collected and synthesized by the orchestrating agent
+1. **Core loop + bash tool + one agent** — works end-to-end in a terminal
+2. **Provider layer + `config.toml`** — OpenAI + Anthropic + OpenAI-compatible, per-agent model routing, API keys and OAuth
+3. **Tool hooks** — middleware chain with blocklist, path guards, confirm-prompt
+4. **Tool registry + 4 agent types** — role whitelists enforced
+5. **Redis bus** — two agents talking through Pub/Sub
+6. **Context compaction** — summarize old messages when over token budget
+7. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
 
 ## 🧠 Core Business Logic
 
