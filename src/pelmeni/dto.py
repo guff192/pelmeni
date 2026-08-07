@@ -10,7 +10,7 @@ class ToolFunction(BaseModel):
 
     name: str
     description: str
-    parameters: dict[str, Any]
+    parameters: dict[str, Any]  # noqa: WPS110
 
 
 class Tool(BaseModel):
@@ -32,21 +32,21 @@ class SystemMessage(BaseModel):
     """Mirroring cli.py:17, loop.py:31 roles."""
 
     role: Literal["system"]
-    content: str
+    content: str  # noqa: WPS110
 
 
 class UserMessage(BaseModel):
     """Mirroring cli.py:17, loop.py:31 roles."""
 
     role: Literal["user"]
-    content: str
+    content: str  # noqa: WPS110
 
 
 class AssistantMessage(BaseModel):
     """Mirroring loop.py structure, allowing empty content for tool calls."""
 
     role: Literal["assistant"]
-    content: str | None = None
+    content: str | None = None  # noqa: WPS110
     tool_calls: list[ToolCall] | None = None
     model_config = ConfigDict(extra="allow")
 
@@ -56,7 +56,7 @@ class ToolMessage(BaseModel):
 
     role: Literal["tool"]
     tool_call_id: str
-    content: str
+    content: str  # noqa: WPS110
 
 
 Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage
@@ -80,5 +80,5 @@ class TraceEvent(BaseModel):
 
     ts: float
     event: str
-    data: dict[str, Any]
+    data: dict[str, Any]  # noqa: WPS110
     model_config = ConfigDict(extra="allow")
