@@ -22,6 +22,7 @@ build-backend = "uv_build"
 dev = [
     "flake8>=7.3.0",
     "ruff>=0.16.1",
+    "ty>=0.0.69",
     "wemake-python-styleguide>=1.7.1",
 ]
 
