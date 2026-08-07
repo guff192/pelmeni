@@ -11,10 +11,10 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING
 
-from . import provider, tools
+from pelmeni import provider, tools
 
 if TYPE_CHECKING:
-    from .trace import Trace
+    from pelmeni.trace import Trace
 
 
 MAX_ITERATIONS = 25

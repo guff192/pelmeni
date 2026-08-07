@@ -12,7 +12,9 @@ import types
 BASH_TOOL = types.MappingProxyType(
     {
         "type": "function",
-        "function": {
+        # 'function' is an OpenAI wire-format key repeated by schema
+        # structure; extracting a constant adds indirection without clarity.
+        "function": {  # noqa: WPS226
             "name": "bash",
             "description": (
                 "Run a shell command and return stdout, stderr, and exit code. "
@@ -79,7 +81,8 @@ def execute_bash(command: str) -> str:
     out_parts.append(f"\n[exit code: {proc.returncode}]")
     out = "".join(out_parts)
     if len(out) > _MAX_OUTPUT_CHARS:
-        out = f"{out[:_MAX_OUTPUT_CHARS]}\n[output truncated]"
+        truncated = out[:_MAX_OUTPUT_CHARS]
+        out = f"{truncated}\n[output truncated]"
     return out
 
 

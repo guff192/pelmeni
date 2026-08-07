@@ -1,23 +1,7 @@
-from typing import Any, Literal
+"""Data transfer objects for messages and tool calls."""
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
-
-# Based on shapes in cli.py, loop.py, tools.py, provider.py, trace.py
-
-
-class ToolFunction(BaseModel):
-    """Mirroring tools.py:33 structure for function definitions."""
-
-    name: str
-    description: str
-    parameters: dict[str, Any]  # noqa: WPS110
-
-
-class Tool(BaseModel):
-    """Mirroring tools.py:33 structure for function definitions."""
-
-    type: Literal["function"] = "function"
-    function: ToolFunction
 
 
 class ToolCall(BaseModel):
@@ -60,25 +44,3 @@ class ToolMessage(BaseModel):
 
 
 Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage
-
-
-class Choice(BaseModel):
-    """Mirroring provider.py:18 message extraction."""
-
-    message: AssistantMessage
-
-
-class ChatResponse(BaseModel):
-    """Mirroring provider.py:18 raw JSON pass-through structure."""
-
-    choices: list[Choice]
-    model_config = ConfigDict(extra="allow")
-
-
-class TraceEvent(BaseModel):
-    """Mirroring trace.py:26 payload structure."""
-
-    ts: float
-    event: str
-    data: dict[str, Any]  # noqa: WPS110
-    model_config = ConfigDict(extra="allow")
