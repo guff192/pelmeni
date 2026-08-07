@@ -188,6 +188,19 @@ An agent is exactly two things: a **system prompt** and a **tool whitelist**. Ro
 **Tools**: bash, write, read
 **Output Format**: Test results with pass/fail status and coverage metrics
 
+## 🔄 Development Process
+
+Standard loop for any edit session, run by the orchestrator (main agent):
+
+1. **Builder edit** — a builder subagent makes the requested change.
+2. **Style review** — immediately after every builder edit, spawn a reviewer subagent to check code style of the touched files (ruff + flake8/WPS clean, project conventions kept).
+3. **Mechanical fix pass** — spawn a new builder-reviewer pair: the builder fixes *only* mechanical issues found in step 2 (line lengths, import order, naming, dead code — single-obvious-way fixes, no design decisions), the reviewer verifies those fixes.
+4. **Orchestrator report** — the main agent reports to the user:
+   - the list of applied fixes
+   - the remaining non-mechanical issues (design choices, complexity refactors, ignore-vs-fix decisions) with options for each
+
+Non-mechanical issues are NEVER fixed without an explicit user decision.
+
 ## 🪝 Tool Hooks
 
 Every tool execution passes through a **hook middleware chain** before running. Hooks are a documented, user-customizable interface — not hardcoded checks.
