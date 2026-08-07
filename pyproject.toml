@@ -40,5 +40,8 @@ ignore = [
     "ISC001",       # Trait conflicts with the formatter
     "D203",         # Incompatible with D211 (we keep no-blank-line-before-class)
     "D213",         # Incompatible with D212 (we keep summary-on-first-line)
+    "TD002",        # TODO author tag — too noisy for a small repo
+    "TD003",        # TODO issue link — no issue tracker yet
+    "FIX002",       # Fires on every TODO; TODOs are allowed
 ]
 

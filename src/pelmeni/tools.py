@@ -53,7 +53,12 @@ def execute_bash(command: str) -> str:
         return "error: command blocked by safety guard"
 
     try:
-        proc = subprocess.run(
+        # TODO: replace raw shell=True with hook-gated two-tier tool (step 3):
+        # safe `run` (shlex.split, no shell) + `bash` (shell, hook-gated).
+        # shell=True is intentional — the bash tool's contract is raw shell
+        # access for agents; governance belongs to the hook middleware,
+        # not to crippling the tool with shell=False.
+        proc = subprocess.run(  # noqa: S602
             command,
             check=False,
             shell=True,
