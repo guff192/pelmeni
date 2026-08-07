@@ -33,6 +33,9 @@ BASH_TOOL = Tool(
 
 TOOLS = (BASH_TOOL,)
 
+# Pre-serialized wire form; TOOLS is static, so dump once at import.
+SERIALIZED_TOOLS = tuple(tool.model_dump() for tool in TOOLS)
+
 _TIMEOUT_SECONDS = 60
 _MAX_OUTPUT_CHARS = 30_000
 
