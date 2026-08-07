@@ -7,32 +7,29 @@ guard — the customizable hook middleware replaces it in build step 3.
 import json
 import re
 import subprocess
-import types
 
-BASH_TOOL = types.MappingProxyType(
-    {
-        "type": "function",
-        # 'function' is an OpenAI wire-format key repeated by schema
-        # structure; extracting a constant adds indirection without clarity.
-        "function": {  # noqa: WPS226
-            "name": "bash",
-            "description": (
-                "Run a shell command and return stdout, stderr, and exit code. "
-                "Use for file inspection, searching, and running programs."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The shell command to execute.",
-                    }
-                },
-                "required": ["command"],
+from pelmeni.dto.tools import Tool, ToolFunction
+
+BASH_TOOL = Tool(
+    type="function",
+    function=ToolFunction(
+        name="bash",
+        description=(
+            "Run a shell command and return stdout, stderr, and exit code. "
+            "Use for file inspection, searching, and running programs."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The shell command to execute.",
+                }
             },
+            "required": ["command"],
         },
-    }
-)
+    ),
+)  # noqa: WPS226
 
 TOOLS = (BASH_TOOL,)
 

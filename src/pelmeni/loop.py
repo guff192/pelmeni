@@ -26,10 +26,11 @@ def run(messages: list[dict], trace: Trace) -> str | None:
     Mutates `messages` in place (that's the point — the list IS the state).
     Returns the final assistant text, or None if the iteration cap hit.
     """
+    serialized_tools = [tool.model_dump() for tool in tools.TOOLS]
     for _ in range(MAX_ITERATIONS):
-        trace.log("request", {"messages": messages, "tools": tools.TOOLS})
+        trace.log("request", {"messages": messages, "tools": serialized_tools})
         try:
-            resp = provider.chat(messages, tools.TOOLS)
+            resp = provider.chat(messages, serialized_tools)
         except provider.ProviderError as exc:
             print(f"error: LLM request failed: {exc}", file=sys.stderr)
             return None
