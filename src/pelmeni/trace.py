@@ -25,13 +25,13 @@ class Trace:
         ).hexdigest()[:8]
         self.dir = SESSIONS_ROOT / project / session_id
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.file = self.dir / "trace.jsonl"
+        self.trace_file = self.dir / "trace.jsonl"
 
-    def log(self, event: str, data: dict) -> None:
+    def log(self, event: str, trace_data: dict) -> None:
         line = json.dumps(
-            {"ts": time.time(), "event": event, **data},
+            {"ts": time.time(), "event": event, **trace_data},
             ensure_ascii=False,
             default=str,
         )
-        with self.file.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        with self.trace_file.open("a", encoding="utf-8") as trace_file:
+            trace_file.write(line + "\n")

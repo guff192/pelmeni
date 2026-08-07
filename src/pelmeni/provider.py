@@ -33,6 +33,6 @@ def chat(messages: list[dict], tools: list[dict] | None = None) -> dict:
         )
         resp.raise_for_status()
         return resp.json()
-    except (httpx.HTTPError, ValueError) as e:
-        msg = f"Provider request failed: {e}"
-        raise ProviderError(msg) from e
+    except (httpx.HTTPError, ValueError) as exc:
+        msg = f"Provider request failed: {exc}"
+        raise ProviderError(msg) from exc

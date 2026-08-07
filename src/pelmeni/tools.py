@@ -49,7 +49,7 @@ _BLOCKED = [
 
 def execute_bash(command: str) -> str:
     """Run a command, return a plain-text result for the tool message."""
-    if any(p.search(command) for p in _BLOCKED):
+    if any(pattern.search(command) for pattern in _BLOCKED):
         return "error: command blocked by safety guard"
 
     try:
@@ -68,8 +68,8 @@ def execute_bash(command: str) -> str:
         )
     except subprocess.TimeoutExpired:
         return f"error: command timed out after {_TIMEOUT_SECONDS}s"
-    except subprocess.CalledProcessError as e:
-        return f"error: command finished with return code {e.returncode}"
+    except subprocess.CalledProcessError as exc:
+        return f"error: command finished with return code {exc.returncode}"
 
     out = f"$ {command}\n"
     if proc.stdout:
@@ -87,14 +87,14 @@ def dispatch(tool_call: dict) -> str:
     name = tool_call["function"]["name"]
     try:
         args = json.loads(tool_call["function"]["arguments"] or "{}")
-    except json.JSONDecodeError as e:
-        return f"error: malformed tool arguments: {e}"
+    except json.JSONDecodeError as exc:
+        return f"error: malformed tool arguments: {exc}"
 
     if name == "bash":
         command = args.get("command")
         if not isinstance(command, str) or not command.strip():
             return "error: missing or empty 'command' argument"
-        result = execute_bash(command)
-        print(f"\n── bash ──\n{result}\n")
-        return result
+        tool_result = execute_bash(command)
+        print(f"\n── bash ──\n{tool_result}\n")
+        return tool_result
     return f"error: unknown tool '{name}'"

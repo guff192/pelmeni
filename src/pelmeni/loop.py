@@ -30,8 +30,8 @@ def run(messages: list[dict], trace: Trace) -> str | None:
         trace.log("request", {"messages": messages, "tools": tools.TOOLS})
         try:
             resp = provider.chat(messages, tools.TOOLS)
-        except provider.ProviderError as e:
-            print(f"error: LLM request failed: {e}", file=sys.stderr)
+        except provider.ProviderError as exc:
+            print(f"error: LLM request failed: {exc}", file=sys.stderr)
             return None
         trace.log("response", resp)
 
@@ -43,26 +43,16 @@ def run(messages: list[dict], trace: Trace) -> str | None:
             return msg.get("content") or ""
 
         for call in tool_calls:
-            result = tools.dispatch(call)
+            tool_result = tools.dispatch(call)
             trace.log("tool_result", {
                 "tool_call_id": call["id"],
-                "result": result,
+                "result": tool_result,
             })
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": call["id"],
-                    "content": result,
-                }
-            )
-            trace.log(
-                "tool_result", {"tool_call_id": call["id"], "result": result}
-            )
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call["id"],
-                    "content": result,
+                    "content": tool_result,
                 }
             )
 

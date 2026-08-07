@@ -17,7 +17,7 @@ def main() -> None:
     trace = Trace(Path.cwd())
     messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
     print(f"pelmeni | model: {provider.MODEL} @ {provider.BASE_URL}")
-    print(f"session trace: {trace.file}")
+    print(f"session trace: {trace.trace_file}")
     print("type your message; Ctrl-D or /exit to quit")
 
     while True:
