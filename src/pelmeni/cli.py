@@ -16,7 +16,7 @@ def _read_input() -> str | None:
     """Read one user line; None ends the session, "" skips the turn."""
     try:
         line = input("\n> ").strip()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError, KeyboardInterrupt:
         print()
         return None
     if line == "/exit":

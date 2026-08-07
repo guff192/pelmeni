@@ -1,4 +1,5 @@
 """Data transfer objects for messages and tool calls."""
+
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict

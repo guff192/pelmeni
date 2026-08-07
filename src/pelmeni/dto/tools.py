@@ -1,4 +1,5 @@
 """Data transfer objects for tools and their functions."""
+
 from typing import Any, Literal
 
 from pydantic import BaseModel

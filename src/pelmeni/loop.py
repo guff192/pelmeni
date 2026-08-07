@@ -44,10 +44,13 @@ def run(messages: list[dict], trace: Trace) -> str | None:
 
         for call in tool_calls:
             tool_result = tools.dispatch(call)
-            trace.log("tool_result", {
-                "tool_call_id": call["id"],
-                "result": tool_result,
-            })
+            trace.log(
+                "tool_result",
+                {
+                    "tool_call_id": call["id"],
+                    "result": tool_result,
+                },
+            )
             messages.append(
                 {
                     "role": "tool",

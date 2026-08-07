@@ -1,4 +1,5 @@
 """Data transfer objects for chat responses."""
+
 from pydantic import BaseModel, ConfigDict
 
 # Runtime import (not TYPE_CHECKING): pydantic resolves field types at
