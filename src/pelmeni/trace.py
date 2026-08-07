@@ -34,4 +34,4 @@ class Trace:
             default=str,
         )
         with self.trace_file.open("a", encoding="utf-8") as trace_file:
-            trace_file.write(line + "\n")
+            trace_file.write(f"{line}\n")

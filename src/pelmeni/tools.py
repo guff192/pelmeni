@@ -32,19 +32,19 @@ BASH_TOOL = types.MappingProxyType(
     }
 )
 
-TOOLS = [BASH_TOOL]
+TOOLS = (BASH_TOOL,)
 
 _TIMEOUT_SECONDS = 60
 _MAX_OUTPUT_CHARS = 30_000
 
 # Temporary guard; replaced by hook middleware in step 3.
-_BLOCKED = [
+_BLOCKED = (
     re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f?\s+/\s*$"),
     re.compile(r"\brm\s+-[a-zA-Z]*f[a-zA-Z]*r?\s+/\s*$"),
     re.compile(r"\bmkfs\b"),
     re.compile(r"\bdd\b.*\bof=/dev/"),
     re.compile(r":\(\)\{.*\}"),  # fork bomb
-]
+)
 
 
 def execute_bash(command: str) -> str:
@@ -71,14 +71,15 @@ def execute_bash(command: str) -> str:
     except subprocess.CalledProcessError as exc:
         return f"error: command finished with return code {exc.returncode}"
 
-    out = f"$ {command}\n"
+    out_parts = [f"$ {command}\n"]
     if proc.stdout:
-        out += proc.stdout
+        out_parts.append(proc.stdout)
     if proc.stderr:
-        out += f"\n[stderr]\n{proc.stderr}"
-    out += f"\n[exit code: {proc.returncode}]"
+        out_parts.append(f"\n[stderr]\n{proc.stderr}")
+    out_parts.append(f"\n[exit code: {proc.returncode}]")
+    out = "".join(out_parts)
     if len(out) > _MAX_OUTPUT_CHARS:
-        out = out[:_MAX_OUTPUT_CHARS] + "\n[output truncated]"
+        out = f"{out[:_MAX_OUTPUT_CHARS]}\n[output truncated]"
     return out
 
 
