@@ -45,3 +45,6 @@ ignore = [
     "FIX002",       # Fires on every TODO; TODOs are allowed
 ]
 
+# noqa codes from flake8/wemake-python-styleguide
+external = ["WPS"]
+
