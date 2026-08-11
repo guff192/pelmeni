@@ -21,6 +21,8 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "flake8>=7.3.0",
+    "mypy>=2.3.0",
+    "pytest>=8.0.0",
     "ruff>=0.16.1",
     "ty>=0.0.69",
     "wemake-python-styleguide>=1.7.1",
@@ -49,3 +51,5 @@ ignore = [
 # noqa codes from flake8/wemake-python-styleguide
 external = ["WPS"]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
