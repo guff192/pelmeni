@@ -1,52 +1,129 @@
-"""Provider client: raw HTTP to an OpenAI-compatible /chat/completions endpoint.
+"""Facade provider layer dispatching to backend provider instances."""
 
-Step-1 scope: one hardcoded provider (LM Studio local server). The provider
-layer with config.toml routing arrives in build step 2 — this module is
-shaped so it becomes a thin wrapper then, not a rewrite.
-"""
+from __future__ import annotations
 
-import httpx
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-# Chebupelka-style constants; moved to config/credentials in step 2.
-API_KEY = "lm-studio"  # LM Studio ignores the key but the header is required
-BASE_URL = "http://localhost:1234/v1"
-MODEL = "qwen/qwen3-8b"
+from pelmeni._provider_factory import ProviderFactory
+from pelmeni.auth import AuthManager
+from pelmeni.config import ConfigService, ResolvedModel
+from pelmeni.providers.base import Provider, ProviderError
 
-_CONNECT_TIMEOUT = 10.0
-_READ_TIMEOUT = 300.0
-_WRITE_TIMEOUT = 30.0
-_POOL_TIMEOUT = 10.0
-_TIMEOUT = httpx.Timeout(
-    connect=_CONNECT_TIMEOUT,
-    read=_READ_TIMEOUT,
-    write=_WRITE_TIMEOUT,
-    pool=_POOL_TIMEOUT,
-)
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
-class ProviderError(Exception):
-    """LLM provider request failed."""
+class ProviderRouter:
+    """Router for managing provider instance configuration and chat dispatch."""
+
+    def __init__(
+        self,
+        config_service: ConfigService | None = None,
+        auth_manager: AuthManager | None = None,
+        factory: ProviderFactory | None = None,
+    ) -> None:
+        """Initialize provider router with optional services."""
+        self._config_service = config_service or ConfigService()
+        self._auth_manager = auth_manager or AuthManager()
+        self._factory = factory or ProviderFactory()
+        self._model: ResolvedModel | None = None
+        self._provider: Provider | None = None
+
+    def configure(
+        self,
+        agent: str = "worker",
+        config_path: Path | str | None = None,
+        credentials_path: Path | str | None = None,
+    ) -> ResolvedModel:
+        """Configure provider router for a specific agent role."""
+        if config_path is not None:
+            self._config_service = ConfigService(path=config_path)
+        if credentials_path is not None:
+            self._auth_manager = AuthManager(path=Path(credentials_path))
+
+        resolved = self._config_service.resolve(agent)
+        self._model = resolved
+        self._provider = self._factory.create(
+            resolved.provider,
+            base_url=resolved.base_url,
+        )
+        return resolved
+
+    def get_configured_model(self) -> ResolvedModel:
+        """Return currently configured model or raise ProviderError."""
+        if self._model is None:
+            msg = "Provider layer is not configured. Call configure() first."
+            raise ProviderError(msg)
+        return self._model
+
+    def describe(self) -> str:
+        """Return formatted string describing current model configuration."""
+        model_info = self.get_configured_model()
+        parts = [
+            f"alias: {model_info.alias}",
+            f"provider: {model_info.provider}",
+            f"model: {model_info.model}",
+        ]
+        if model_info.base_url:
+            parts.append(f"base_url: {model_info.base_url}")
+        return ", ".join(parts)
+
+    def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: Sequence[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Dispatch chat request to configured provider implementation."""
+        if self._model is None or self._provider is None:
+            msg = "Provider layer is not configured. Call configure() first."
+            raise ProviderError(msg)
+
+        credentials = self._auth_manager.resolve(self._model.provider)
+
+        try:
+            return self._provider.chat(
+                messages=messages,
+                tools=tools,
+                model=self._model.model,
+                credentials=credentials,
+            )
+        except ProviderError:
+            raise
+        except Exception as exc:
+            msg = f"Provider request failed: {exc}"
+            raise ProviderError(msg) from exc
 
 
-def _send(payload: dict) -> dict:
-    """POST chat payload, raise on HTTP errors, return parsed JSON."""
-    resp = httpx.post(
-        f"{BASE_URL}/chat/completions",
-        headers={"Authorization": f"Bearer {API_KEY}"},
-        json=payload,
-        timeout=_TIMEOUT,
+_ROUTER = ProviderRouter()
+
+
+def configure(
+    agent: str = "worker",
+    config_path: Path | str | None = None,
+    credentials_path: Path | str | None = None,
+) -> ResolvedModel:
+    """Configure module router for a specific agent role."""
+    return _ROUTER.configure(
+        agent=agent,
+        config_path=config_path,
+        credentials_path=credentials_path,
     )
-    resp.raise_for_status()
-    return resp.json()
 
 
-def chat(messages: list[dict], tools: list[dict] | None = None) -> dict:
-    """One round-trip to the chat API. Returns the raw response JSON."""
-    payload: dict = {"model": MODEL, "messages": messages}
-    if tools:
-        payload["tools"] = tools
-    try:
-        return _send(payload)
-    except (httpx.HTTPError, ValueError) as exc:
-        msg = f"Provider request failed: {exc}"
-        raise ProviderError(msg) from exc
+def get_configured_model() -> ResolvedModel:
+    """Return currently configured model from module router."""
+    return _ROUTER.get_configured_model()
+
+
+def describe() -> str:
+    """Return description from module router."""
+    return _ROUTER.describe()
+
+
+def chat(
+    messages: list[dict[str, Any]],
+    tools: Sequence[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Dispatch chat via module router."""
+    return _ROUTER.chat(messages=messages, tools=tools)
