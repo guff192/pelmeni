@@ -27,6 +27,11 @@ class Trace:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.trace_file = self.dir / "trace.jsonl"
 
+    @property
+    def session_id(self) -> str:
+        """Return the unique session identifier (directory name)."""
+        return self.dir.name
+
     def log(self, event: str, trace_data: dict) -> None:
         line = json.dumps(
             {"ts": time.time(), "event": event, **trace_data},

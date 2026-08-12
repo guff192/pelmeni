@@ -1,14 +1,17 @@
-"""Bash tool: schema, dispatch, and a minimal hardcoded guard.
+"""Bash tool schema, dispatch, and execution."""
 
-Step-1 scope: the only tool is `bash`. The blocklist below is a temporary
-guard — the customizable hook middleware replaces it in build step 3.
-"""
+from __future__ import annotations
 
 import json
-import re
 import subprocess
+from typing import TYPE_CHECKING
 
 from pelmeni.dto.tools import Tool, ToolFunction
+
+if TYPE_CHECKING:
+    from pelmeni.dto.hooks import HookContext
+    from pelmeni.hooks.chain import HookChain
+
 
 BASH_TOOL = Tool(
     type="function",
@@ -38,22 +41,16 @@ SERIALIZED_TOOLS = tuple(tool.model_dump() for tool in TOOLS)
 
 _TIMEOUT_SECONDS = 60
 _MAX_OUTPUT_CHARS = 30_000
+_hook_chain: HookChain | None = None
 
-# Temporary guard; replaced by hook middleware in step 3.
-_BLOCKED = (
-    re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f?\s+/\s*$"),
-    re.compile(r"\brm\s+-[a-zA-Z]*f[a-zA-Z]*r?\s+/\s*$"),
-    re.compile(r"\bmkfs\b"),
-    re.compile(r"\bdd\b.*\bof=/dev/"),
-    re.compile(r":\(\)\{.*\}"),  # fork bomb
-)
+
+def configure_hooks(chain: HookChain) -> None:
+    """Set the hook chain used by dispatch."""
+    globals()["_hook_chain"] = chain
 
 
 def execute_bash(command: str) -> str:
     """Run a command, return a plain-text result for the tool message."""
-    if any(pattern.search(command) for pattern in _BLOCKED):
-        return "error: command blocked by safety guard"
-
     try:
         # TODO: replace raw shell=True with hook-gated two-tier tool (step 3):
         # safe `run` (shlex.split, no shell) + `bash` (shell, hook-gated).
@@ -86,16 +83,32 @@ def execute_bash(command: str) -> str:
     return out
 
 
-def dispatch(tool_call: dict) -> str:
+def _run_hooks(tool_call: dict, context: HookContext) -> dict | str:
+    if _hook_chain is None:
+        return tool_call
+    hook_result = _hook_chain.run(tool_call, context)
+    if hook_result.verdict == "deny":
+        return f"error: blocked by hook: {hook_result.reason}"
+    if hook_result.verdict == "modify" and hook_result.tool_call is not None:
+        return hook_result.tool_call
+    return tool_call
+
+
+def dispatch(tool_call: dict, context: HookContext) -> str:
     """Execute one tool call from the model. Never raises."""
-    name = tool_call["function"]["name"]
+    processed_call = _run_hooks(tool_call, context)
+    if isinstance(processed_call, str):
+        return processed_call
+    name = processed_call["function"]["name"]
     try:
-        args = json.loads(tool_call["function"]["arguments"] or "{}")
+        arguments = json.loads(
+            processed_call["function"]["arguments"] or "{}",
+        )
     except json.JSONDecodeError as exc:
         return f"error: malformed tool arguments: {exc}"
 
     if name == "bash":
-        command = args.get("command")
+        command = arguments.get("command")
         if not isinstance(command, str) or not command.strip():
             return "error: missing or empty 'command' argument"
         tool_result = execute_bash(command)

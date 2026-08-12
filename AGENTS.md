@@ -219,11 +219,89 @@ Non-mechanical issues are NEVER fixed without an explicit user decision.
 
 Every tool execution passes through a **hook middleware chain** before running. Hooks are a documented, user-customizable interface — not hardcoded checks.
 
-- **Interface**: `hook(tool_call, context) -> allow | deny | modify`
-- **Built-in hooks**: command blocklist (e.g. `rm -rf /`), path guards (writes restricted to the workspace), confirm-prompt (ask the user y/n before risky commands)
-- **Customization**: users add hooks in `config.toml` or as Python modules under `~/.config/pelmeni/hooks/`; ordering is explicit
-- **Applies to all tools**, but the primary motivation is governing raw `bash` access for Builder and Tester agents
-- **v1 interim**: until step 3, `tools.py` carries a small hardcoded blocklist (`rm -rf /` class)
+### Hook Interface
+
+```python
+hook(tool_call: dict, context: HookContext) -> HookResult
+```
+
+`HookResult` is a union object with three possible verdicts:
+- **`allow`** — tool call proceeds unchanged
+- **`deny`** — tool call blocked; error string returned to the LLM so it can adapt
+- **`modify`** — tool call proceeds with a rewritten `tool_call` dict (original untouched); optional metadata (log level, tags) attached for observability
+
+### Hook Context
+
+The `context` parameter carries:
+- `agent_role` — the role of the agent making the call (e.g. `"builder"`, `"tester"`)
+- `session_id` — unique identifier for the current agent session
+- `tool_history` — recent tool calls in this session (for rate-limiting / pattern-matching hooks)
+
+Kept minimal; extend later as real needs appear.
+
+### Built-in Hooks
+
+Three built-in hooks ship with pelmeni:
+1. **Command blocklist** — regex patterns blocking destructive commands (`rm -rf /`, `mkfs`, `dd of=/dev/`, fork bombs)
+2. **Path guards** — configurable allow/deny path glob patterns with sensible defaults (block writes outside workspace). User overrides patterns in `config.toml`
+3. **Confirm-prompt** — publishes a confirmation request to the agent bus; the user can jump into any agent's session (tmux pane in v1) to see the agent's thinking, tool calls, and output, then approve or reject the action. Configurable per-session to auto-allow or auto-deny for unattended runs
+
+### Confirm-Prompt: Session Visibility
+
+The confirm-prompt hook is built on top of the Redis agent bus (build step 5), not blocking stdin:
+- Each agent session runs in its own **tmux pane** (v1). The user can attach to any pane to observe the agent's full reasoning and tool calls in real time
+- When a hook requires confirmation, it **publishes a confirm request** to the bus. The agent's pane displays the pending action and waits for a response
+- The user jumps into the pane, sees full context, and responds `y/n`
+- **Bypass modes** (configured per-session in `config.toml`): `confirm = "ask"` (default), `confirm = "always-allow"`, `confirm = "always-deny"`
+- **Future**: support for other terminal multiplexers beyond tmux; bus-based confirmation remains the underlying mechanism regardless of UI frontend
+
+### Hook Scope & Filtering
+
+- Hooks apply to **all tools**, not just bash — future tools (grep, read, write, edit) go through the same chain
+- Each hook can declare a **tool filter** (list of tool names it cares about). The chain skips hooks whose filter doesn't match the current tool — avoids unnecessary invocations
+- Read-only tools still pass through hooks for audit capability, but the default built-in hooks only gate write/execute tools
+
+### Hook Ordering & Chain Behavior
+
+- Hook execution order is an **explicit list** in `config.toml` under `[hooks]`
+- **Short-circuit on first deny** — remaining hooks are skipped once any hook denies
+- Built-in hooks are listed by default; user hooks are appended or inserted at specific positions
+
+### User-Defined Hooks
+
+- Users add custom hooks as Python modules under `~/.config/pelmeni/hooks/`
+- Modules are **declared explicitly** in `config.toml` — only listed modules are loaded (no directory scanning magic)
+- Each module must export a `hook()` function matching the hook interface
+- Loading via `importlib`; module path resolved relative to `~/.config/pelmeni/hooks/`
+
+### Error Handling
+
+- A hook that raises an exception is treated as **deny** (fail-closed) by default
+- The exception is logged with full traceback
+- Per-hook `fail_open = true` in `config.toml` overrides to allow — intended for hook development/debugging only
+
+### Configuration Example
+
+```toml
+[hooks]
+chain = ["blocklist", "path_guard", "confirm_prompt", "my_custom_hook"]
+
+[hooks.path_guard]
+allow = ["./src/**", "./tests/**", "./config.toml"]
+deny = ["/etc/**", "/usr/**", "~/.ssh/**"]
+
+[hooks.confirm_prompt]
+default = "ask"          # "ask" | "always-allow" | "always-deny"
+
+[hooks.my_custom_hook]
+module = "audit_log"     # loads ~/.config/pelmeni/hooks/audit_log.py
+tools = ["bash", "write"]
+fail_open = true         # dev mode: don't block on hook errors
+```
+
+### v1 Interim
+
+Until build step 3 is implemented, `tools.py` carries a small hardcoded blocklist (`rm -rf /` class). The hook middleware chain replaces it entirely.
 
 ## 🔧 Agent Communication
 
@@ -263,7 +341,7 @@ Vertical slice first; each step ends with something runnable:
 
 1. **Core loop + bash tool + one agent** — ✅ done (`src/pelmeni/`): multi-turn REPL session with one agent, bash tool with timeout + temp blocklist, JSONL traces per session
 2. **Provider layer + `config.toml`** — ✅ done (`src/pelmeni/`): OpenAI + Anthropic + Google + OpenAI-compatible, per-agent model routing, credential store, Google OAuth device flow, provider facade
-3. **Tool hooks** — middleware chain with blocklist, path guards, confirm-prompt
+3. **Tool hooks** — ✅ done (`src/pelmeni/hooks/`): middleware chain with blocklist, path guards, confirm-prompt
 4. **Tool registry + 4 agent types** — role whitelists enforced
 5. **Redis bus** — two agents talking through Pub/Sub
 6. **Context compaction** — summarize old messages when over token budget
@@ -278,8 +356,9 @@ src/pelmeni/
 ├── loop.py                 # Core agent loop (~100 lines)
 ├── tools.py                # Tool registry & hook middleware chain
 ├── trace.py                # Session trace logging
-├── dto/                    # Pydantic Data Transfer Objects (credentials, messages, tools, responses, trace)
+├── dto/                    # Pydantic Data Transfer Objects & hook DTOs
 ├── auth/                   # Credentials management & Chain of Responsibility resolver
+├── hooks/                  # Tool call middleware chain & built-in hooks
 ├── providers/              # LLM Provider layer, router facade & factory registry
 └── config/                 # Pydantic boundary validation schemas & ConfigService facade
 ```
@@ -335,7 +414,17 @@ The project architecture underwent a comprehensive modular refactoring to elimin
   - `parser.py`: TOML loader & parser routines.
   - `service.py`: `ConfigService` facade & `AppConfig` runtime value object.
 
-### 5. Quality & Verification Gates
-- **Pytest**: 100% test coverage green.
-- **Mypy**: Strict static typing passes.
+### 5. Tool Hooks Middleware (`src/pelmeni/hooks/`)
+- **Build Step 3 Complete**: Replaced hardcoded bash regex blocklist with a fully configurable, extensible hook middleware chain (`HookChain`).
+- **Protocol & DTOs**: Structural `Hook` protocol (`protocol.py`), immutable `HookContext` and `HookResult` value objects (`dto/hooks.py`).
+- **Built-in Hooks** (`builtins.py`):
+  - `BlocklistHook`: migrated and expanded destructive pattern matching.
+  - `PathGuardHook`: configurable file path boundary guards using glob patterns.
+  - `ConfirmPromptHook`: pluggable human-in-the-loop confirmation (ask, always-allow, always-deny, stdin fallback).
+- **Dynamic Loading & Config** (`loader.py`): chain order configured in `config.toml` under `[hooks.chain]`; loads user-defined Python module hooks from `~/.config/pelmeni/hooks/` via `importlib.util`.
+- **Wiring & Dispatch**: `tools.dispatch()` gates all tool execution through `HookChain.run()`; `loop.run()` propagates context and history; `cli.py` initializes config-driven hooks.
+
+### 6. Quality & Verification Gates
+- **Pytest**: 100% test coverage green (50 passed tests).
+- **Mypy**: Strict static typing passes (0 errors across 51 source files).
 - **Ruff & Flake8**: 0 diagnostics / 0 WPS violations across the entire codebase.

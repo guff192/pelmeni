@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from pelmeni.config.models import (
     AgentModelSchema,
     AppConfigSchema,
+    HooksSchema,
     ModelSpec,
 )
 from pelmeni.config.parser import ConfigError, load_toml, parse_model_spec
@@ -23,12 +24,25 @@ def _validate_models(models: dict[str, str]) -> dict[str, str]:
     return models
 
 
+def _extract_raw_hooks(raw_config: dict[str, object]) -> dict[str, dict]:
+    hooks_table = raw_config.get("hooks", {})
+    if not isinstance(hooks_table, dict):
+        return {}
+    return {
+        name: hook_data
+        for name, hook_data in hooks_table.items()
+        if name != "chain" and isinstance(hook_data, dict)
+    }
+
+
 @dataclass(frozen=True)
 class AppConfig:
     """Validated models and agent mappings."""
 
     models: dict[str, str]
     agents: dict[str, AgentModelSchema]
+    hooks: HooksSchema | None = None
+    raw_hooks: dict[str, dict] = field(default_factory=dict)
 
 
 class ConfigService:
@@ -43,14 +57,19 @@ class ConfigService:
         if not target_path.exists():
             message = f"Config file not found: {self.path}"
             raise ConfigError(message)
-        validated = self._validate_schema(load_toml(target_path), target_path)
+        raw_config = load_toml(target_path)
+        validated = self._validate_schema(raw_config, target_path)
         if "default" not in validated.agents:
             message = f"Missing required agent: default in '{target_path}'"
             raise ConfigError(message)
 
         models = _validate_models(validated.models)
-        agents = self._validate_agents(validated.agents, models)
-        return AppConfig(models=models, agents=agents)
+        return AppConfig(
+            models=models,
+            agents=self._validate_agents(validated.agents, models),
+            hooks=validated.hooks,
+            raw_hooks=_extract_raw_hooks(raw_config),
+        )
 
     def resolve(
         self,

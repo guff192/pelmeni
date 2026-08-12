@@ -10,7 +10,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from pelmeni.config import AppConfig, ConfigService
-from pelmeni.config.models import AgentModelSchema
+from pelmeni.config.models import (
+    AgentModelSchema,
+    AppConfigSchema,
+    HooksSchema,
+)
 from pelmeni.config.parser import ConfigError
 
 
@@ -156,3 +160,25 @@ def test_resolve_model_fallback_to_default() -> None:
     assert resolved.alias == "m1"
     assert resolved.provider == "openai"
     assert resolved.model == "gpt-4o"
+
+
+def test_hooks_config_parsed() -> None:
+    """AppConfigSchema accepts a hooks section."""
+    schema = AppConfigSchema(
+        models={"local": "openai:gpt-4o"},
+        agents={"default": AgentModelSchema(model="local")},
+        hooks=HooksSchema(chain=["blocklist"]),
+    )
+
+    assert schema.hooks is not None
+    assert schema.hooks.chain == ["blocklist"]
+
+
+def test_hooks_config_optional() -> None:
+    """Missing hooks config defaults to None."""
+    schema = AppConfigSchema(
+        models={"local": "openai:gpt-4o"},
+        agents={"default": AgentModelSchema(model="local")},
+    )
+
+    assert schema.hooks is None
