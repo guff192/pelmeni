@@ -190,6 +190,20 @@ An agent is exactly two things: a **system prompt** and a **tool whitelist**. Ro
 
 ## 🔄 Development Process
 
+### Development Methodology (TDD)
+Preferred way of development is **Test-Driven Development (TDD)**:
+- Write failing tests first covering basic expected behavior.
+- Implement features/changes to make the tests pass.
+- Refactor while keeping tests green.
+
+### Verification Gates
+Every change MUST pass all 4 verification gates in this **exact order**:
+1. **Pytest** — `.venv/bin/pytest -q tests/`
+2. **Mypy** — `.venv/bin/mypy src/pelmeni`
+3. **Ruff** — `.venv/bin/ruff check --ignore T201,D107,D102,ANN204,CPY001 src/pelmeni`
+4. **Flake8** — `.venv/bin/flake8 src/pelmeni`
+
+### Standard Edit Loop
 Standard loop for any edit session, run by the orchestrator (main agent):
 
 1. **Builder edit** — a builder subagent makes the requested change.
@@ -200,7 +214,6 @@ Standard loop for any edit session, run by the orchestrator (main agent):
    - the remaining non-mechanical issues (design choices, complexity refactors, ignore-vs-fix decisions) with options for each
 
 Non-mechanical issues are NEVER fixed without an explicit user decision.
-
 ## 🪝 Tool Hooks
 
 Every tool execution passes through a **hook middleware chain** before running. Hooks are a documented, user-customizable interface — not hardcoded checks.
@@ -246,7 +259,7 @@ Agents communicate through Redis:
 Vertical slice first; each step ends with something runnable:
 
 1. **Core loop + bash tool + one agent** — ✅ done (`src/pelmeni/`): multi-turn REPL session with one agent, bash tool with timeout + temp blocklist, JSONL traces per session
-2. **Provider layer + `config.toml`** — OpenAI + Anthropic + OpenAI-compatible, per-agent model routing, API keys and OAuth
+2. **Provider layer + `config.toml`** — ✅ done (`src/pelmeni/`): OpenAI + Anthropic + Google + OpenAI-compatible, per-agent model routing, credential store, Google OAuth device flow, provider facade
 3. **Tool hooks** — middleware chain with blocklist, path guards, confirm-prompt
 4. **Tool registry + 4 agent types** — role whitelists enforced
 5. **Redis bus** — two agents talking through Pub/Sub
