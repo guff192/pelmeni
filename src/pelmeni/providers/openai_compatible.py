@@ -18,7 +18,7 @@ from pelmeni.providers.base import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pelmeni.credentials import Credentials
+    from pelmeni.dto.credentials import Credentials
 
 
 class OpenAICompatibleProvider:

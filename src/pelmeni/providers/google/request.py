@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pelmeni.providers._google_messages import GoogleMessageTranslator
-from pelmeni.providers._google_tools import GoogleToolTranslator
+from pelmeni.providers.google.messages import GoogleMessageTranslator
+from pelmeni.providers.google.tools import GoogleToolTranslator
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

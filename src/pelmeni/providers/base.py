@@ -59,7 +59,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import httpx
 
-from pelmeni.credentials import (
+from pelmeni.dto.credentials import (
     ApiKeyCredentials,
     NoCredentials,
     OAuthCredentials,

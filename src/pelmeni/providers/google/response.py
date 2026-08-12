@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pelmeni.providers._google_calls import (
+from pelmeni.providers.google.calls import (
     GoogleCandidateParser,
     ToolCallList,
 )

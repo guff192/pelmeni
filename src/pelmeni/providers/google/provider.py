@@ -6,14 +6,16 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
-from pelmeni.credentials import ApiKeyCredentials, OAuthCredentials
-from pelmeni.providers._google_request import GoogleRequestTranslator
-from pelmeni.providers._google_response import GoogleResponseParser
+from pelmeni.dto.credentials import ApiKeyCredentials, OAuthCredentials
 from pelmeni.providers.base import (
     DEFAULT_TIMEOUT,
     ProviderCredentials,
     ProviderError,
     handle_http_errors,
+)
+from pelmeni.providers.google.formatters import (
+    GoogleRequestTranslator,
+    GoogleResponseParser,
 )
 
 if TYPE_CHECKING:
