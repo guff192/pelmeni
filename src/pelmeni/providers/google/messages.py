@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pelmeni.providers._google_assistant import GoogleAssistantTranslator
+from pelmeni.providers.google.assistant import GoogleAssistantTranslator
 
 _ROLE_USER = "user"
 _ROLE_SYSTEM = "system"

@@ -11,7 +11,8 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING
 
-from pelmeni import provider, tools
+from pelmeni import tools
+from pelmeni.providers import router as provider
 
 if TYPE_CHECKING:
     from pelmeni.trace import Trace

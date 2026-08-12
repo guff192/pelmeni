@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-from pelmeni.providers._google_text import GoogleTextParser
+from pelmeni.providers.google.text import GoogleTextParser
 
 ToolCallList = list[dict[str, Any]]
 ToolCallDict = dict[str, Any]

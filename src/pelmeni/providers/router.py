@@ -5,13 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pelmeni._provider_factory import ProviderFactory
 from pelmeni.auth import AuthManager
-from pelmeni.config import ConfigService, ResolvedModel
+from pelmeni.config import ConfigService
 from pelmeni.providers.base import Provider, ProviderError
+from pelmeni.providers.factory import ProviderFactory
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from pelmeni.config.models import ModelSpec
 
 
 class ProviderRouter:
@@ -27,7 +29,7 @@ class ProviderRouter:
         self._config_service = config_service or ConfigService()
         self._auth_manager = auth_manager or AuthManager()
         self._factory = factory or ProviderFactory()
-        self._model: ResolvedModel | None = None
+        self._model: ModelSpec | None = None
         self._provider: Provider | None = None
 
     def configure(
@@ -35,7 +37,7 @@ class ProviderRouter:
         agent: str = "worker",
         config_path: Path | str | None = None,
         credentials_path: Path | str | None = None,
-    ) -> ResolvedModel:
+    ) -> ModelSpec:
         """Configure provider router for a specific agent role."""
         if config_path is not None:
             self._config_service = ConfigService(path=config_path)
@@ -50,7 +52,7 @@ class ProviderRouter:
         )
         return resolved
 
-    def get_configured_model(self) -> ResolvedModel:
+    def get_configured_model(self) -> ModelSpec:
         """Return currently configured model or raise ProviderError."""
         if self._model is None:
             msg = "Provider layer is not configured. Call configure() first."
@@ -102,7 +104,7 @@ def configure(
     agent: str = "worker",
     config_path: Path | str | None = None,
     credentials_path: Path | str | None = None,
-) -> ResolvedModel:
+) -> ModelSpec:
     """Configure module router for a specific agent role."""
     return _ROUTER.configure(
         agent=agent,
@@ -111,7 +113,7 @@ def configure(
     )
 
 
-def get_configured_model() -> ResolvedModel:
+def get_configured_model() -> ModelSpec:
     """Return currently configured model from module router."""
     return _ROUTER.get_configured_model()
 

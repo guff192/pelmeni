@@ -10,9 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from pelmeni.credentials import ApiKeyCredentials, OAuthCredentials
-from pelmeni.providers._anthropic_request import AnthropicRequestTranslator
-from pelmeni.providers._anthropic_response import AnthropicResponseTranslator
+from pelmeni.dto.credentials import ApiKeyCredentials, OAuthCredentials
+from pelmeni.providers.anthropic.formatters import (
+    AnthropicRequestTranslator,
+    AnthropicResponseTranslator,
+)
 from pelmeni.providers.base import (
     DEFAULT_TIMEOUT,
     Provider,

@@ -9,12 +9,9 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from pelmeni.config import (
-    AgentConfig,
-    AppConfig,
-    ConfigError,
-    ConfigService,
-)
+from pelmeni.config import AppConfig, ConfigService
+from pelmeni.config.models import AgentModelSchema
+from pelmeni.config.parser import ConfigError
 
 
 def test_parse_model_spec_standard() -> None:
@@ -73,8 +70,8 @@ def test_load_config_valid(tmp_path: Path) -> None:
     cfg = service.load()
     assert isinstance(cfg, AppConfig)
     assert cfg.models["default"] == "openai:gpt-4o"
-    assert cfg.agents["default"] == AgentConfig(model="default")
-    assert cfg.agents["worker"] == AgentConfig(model="fast")
+    assert cfg.agents["default"] == AgentModelSchema(model="default")
+    assert cfg.agents["worker"] == AgentModelSchema(model="fast")
 
 
 def test_load_config_file_not_found(tmp_path: Path) -> None:
@@ -133,8 +130,8 @@ def test_resolve_model_exact_role() -> None:
             "m2": "anthropic:claude-3-5-sonnet",
         },
         agents={
-            "default": AgentConfig(model="m1"),
-            "worker": AgentConfig(model="m2"),
+            "default": AgentModelSchema(model="m1"),
+            "worker": AgentModelSchema(model="m2"),
         },
     )
     service = ConfigService()
@@ -151,7 +148,7 @@ def test_resolve_model_fallback_to_default() -> None:
             "m1": "openai:gpt-4o",
         },
         agents={
-            "default": AgentConfig(model="m1"),
+            "default": AgentModelSchema(model="m1"),
         },
     )
     service = ConfigService()

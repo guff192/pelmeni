@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pelmeni.providers._anthropic_arguments import AnthropicArgumentCodec
-from pelmeni.providers._anthropic_messages import (
+from pelmeni.providers.anthropic.arguments import AnthropicArgumentCodec
+from pelmeni.providers.anthropic.messages import (
     AnthropicMessageTranslator,
 )
 

@@ -6,9 +6,10 @@ import argparse
 import sys
 from pathlib import Path
 
-from pelmeni import loop, provider
+from pelmeni import loop
 from pelmeni.auth import AuthError, AuthManager
-from pelmeni.config import ConfigError
+from pelmeni.config.parser import ConfigError
+from pelmeni.providers import router as provider
 from pelmeni.trace import Trace
 
 SYSTEM_PROMPT = (

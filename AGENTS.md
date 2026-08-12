@@ -206,10 +206,11 @@ Every change MUST pass all 4 verification gates in this **exact order**:
 ### Standard Edit Loop
 Standard loop for any edit session, run by the orchestrator (main agent):
 
-1. **Builder edit** — a builder subagent makes the requested change.
-2. **Style review** — immediately after every builder edit, spawn a reviewer subagent to check code style of the touched files (ruff + flake8/WPS clean, project conventions kept).
-3. **Mechanical fix pass** — spawn a new builder-reviewer pair: the builder fixes *only* mechanical issues found in step 2 (line lengths, import order, naming, dead code — single-obvious-way fixes, no design decisions), the reviewer verifies those fixes.
-4. **Orchestrator report** — the main agent reports to the user:
+1. **Investigation phase** — before every builder edit, spawn an investigator subagent to identify all files in scope of the problem, analyze dependencies (using LSP/grep/glob), and propose possible solutions.
+2. **Builder edit** — a builder subagent implements the change based on the investigator's findings.
+3. **Style review** — immediately after every builder edit, spawn a reviewer subagent to check code style of the touched files (ruff + flake8/WPS clean, project conventions kept).
+4. **Mechanical fix pass** — spawn a new builder-reviewer pair: the builder fixes *only* mechanical issues found in step 3 (line lengths, import order, naming, dead code — single-obvious-way fixes, no design decisions), the reviewer verifies those fixes.
+5. **Orchestrator report** — the main agent reports to the user:
    - the list of applied fixes
    - the remaining non-mechanical issues (design choices, complexity refactors, ignore-vs-fix decisions) with options for each
 
@@ -249,6 +250,8 @@ Agents communicate through Redis:
 - Containerized agents on K8s, shared Redis/ElastiCache, multi-machine scale-out — designed-for but not built in v1
 
 ## 📋 Agent Spawning
+> **Note**: The agent spawning workflow and edit loop rules apply to the development and orchestration process of pelmeni itself, not to the runtime behavior of end-user agents executed by pelmeni.
+
 
 - **Agent definitions**: each agent = config entry (system prompt + tool whitelist + model alias); no discovery directories needed in v1
 - **Spawning**: the orchestrator process spawns agents as async tasks or subprocesses, each with isolated context and a bus connection
@@ -270,11 +273,15 @@ Vertical slice first; each step ends with something runnable:
 
 ```
 src/pelmeni/
-  provider.py   # raw httpx to OpenAI-compatible /chat/completions (constants for now; config.toml in step 2)
-  tools.py      # bash tool: schema, dispatch, timeout, temp blocklist guard
-  loop.py       # the agent loop: chat -> tool calls -> append -> repeat, 25-iteration cap
-  trace.py      # JSONL session traces
-  cli.py        # multi-turn REPL entry point (`uv run pelmeni`)
+├── __init__.py             # Public facade re-exports
+├── cli.py                  # CLI entry point (`pelmeni auth`, `pelmeni run`)
+├── loop.py                 # Core agent loop (~100 lines)
+├── tools.py                # Tool registry & hook middleware chain
+├── trace.py                # Session trace logging
+├── dto/                    # Pydantic Data Transfer Objects (credentials, messages, tools, responses, trace)
+├── auth/                   # Credentials management & Chain of Responsibility resolver
+├── providers/              # LLM Provider layer, router facade & factory registry
+└── config/                 # Pydantic boundary validation schemas & ConfigService facade
 ```
 
 - **Sessions**: `~/.pelmeni/sessions/<project-name>/<session-hash>/trace.jsonl` — every LLM request/response and tool result
@@ -298,3 +305,37 @@ src/pelmeni/
 - **Style**: Technical, precise, action-oriented
 - **Audience**: Developer-to-developer communication
 - **Format**: Structured, scannable, minimal corporate jargon
+
+
+## 🔄 Recent Updates & Module Refactoring
+
+The project architecture underwent a comprehensive modular refactoring to eliminate flat file clutter, enforce clean design patterns, and maintain 100% compliance with WPS / Flake8 / Ruff / Mypy / Pytest rules:
+
+### 1. Data Transfer Objects (`src/pelmeni/dto/`)
+- Centralized all Pydantic DTO models across `credentials.py`, `messages.py`, `responses.py`, `tools.py`, and `trace.py`.
+- Credentials DTOs (`ApiKeyCredentials`, `OAuthCredentials`, `NoCredentials`) handle boundary serialization and discriminated union parsing.
+
+### 2. Authentication & Resolver (`src/pelmeni/auth/`)
+- Refactored authentication and credential resolution into a dedicated `auth/` package.
+- **Chain of Responsibility Pattern** implemented in `src/pelmeni/auth/resolver.py`:
+  - `AbstractCredentialHandler(ABC)` with fluent `.set_next(target_link)` method chaining.
+  - Sequential resolution chain: `EnvVarHandler` → `TomlStoreHandler` → `NoAuthHandler`.
+  - `AuthManager` facade (`manager.py`) manages interactive logins and store operations.
+- `store.py` enforces strict `0600` permissions on `~/.config/pelmeni/credentials.toml`.
+
+### 3. LLM Provider Layer & Router (`src/pelmeni/providers/`)
+- Organized provider subsystem under `src/pelmeni/providers/`:
+  - **Facade Pattern**: `ProviderRouter` (`router.py`) maps model aliases to provider clients.
+  - **Registry / Factory Pattern**: `ProviderFactory` (`factory.py`) creates provider instances.
+  - Sub-packages `anthropic/` and `google/` isolate request/response formatting logic from main provider adapters.
+
+### 4. Configuration Sub-system (`src/pelmeni/config/`)
+- Structured `config/` package:
+  - `models.py`: Pydantic boundary validation schemas (`AppConfigSchema`, `AgentModelSchema`, `ModelSpec`) for `config.toml`.
+  - `parser.py`: TOML loader & parser routines.
+  - `service.py`: `ConfigService` facade & `AppConfig` runtime value object.
+
+### 5. Quality & Verification Gates
+- **Pytest**: 100% test coverage green.
+- **Mypy**: Strict static typing passes.
+- **Ruff & Flake8**: 0 diagnostics / 0 WPS violations across the entire codebase.
