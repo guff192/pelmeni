@@ -9,19 +9,46 @@ No SDK, no hidden machinery: every token sent to the model is visible in
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from pelmeni import tools
 from pelmeni.providers import router as provider
 
 if TYPE_CHECKING:
+    from pelmeni.dto.hooks import HookContext
     from pelmeni.trace import Trace
 
 
 MAX_ITERATIONS = 25
 
 
-def run(messages: list[dict], trace: Trace) -> str | None:
+def _dispatch_tool(
+    messages: list[dict],
+    trace: Trace,
+    call: dict,
+    context: HookContext,
+) -> HookContext:
+    tool_result = tools.dispatch(call, context)
+    trace.log(
+        "tool_result",
+        {"tool_call_id": call["id"], "result": tool_result},
+    )
+    messages.append(
+        {
+            "role": "tool",
+            "tool_call_id": call["id"],
+            "content": tool_result,
+        }
+    )
+    return replace(context, tool_history=(*context.tool_history, call))
+
+
+def run(
+    messages: list[dict],
+    trace: Trace,
+    context: HookContext,
+) -> str | None:
     """Run the loop until the model answers without tool calls.
 
     Mutates `messages` in place (that's the point — the list IS the state).
@@ -47,21 +74,7 @@ def run(messages: list[dict], trace: Trace) -> str | None:
             return msg.get("content") or ""
 
         for call in tool_calls:
-            tool_result = tools.dispatch(call)
-            trace.log(
-                "tool_result",
-                {
-                    "tool_call_id": call["id"],
-                    "result": tool_result,
-                },
-            )
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call["id"],
-                    "content": tool_result,
-                }
-            )
+            context = _dispatch_tool(messages, trace, call, context)
 
     print(f"error: iteration cap ({MAX_ITERATIONS}) reached", file=sys.stderr)
     return None

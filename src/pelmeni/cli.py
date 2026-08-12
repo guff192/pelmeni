@@ -7,8 +7,10 @@ import sys
 from pathlib import Path
 
 from pelmeni import loop
-from pelmeni.auth import AuthError, AuthManager
+from pelmeni.config import ConfigService
 from pelmeni.config.parser import ConfigError
+from pelmeni.dto.hooks import HookContext
+from pelmeni.hooks.loader import load_hooks
 from pelmeni.providers import router as provider
 from pelmeni.trace import Trace
 
@@ -30,7 +32,11 @@ def _read_input() -> str | None:
     return line
 
 
-def _run_repl(messages: list[dict], trace: Trace) -> None:
+def _run_repl(
+    messages: list[dict],
+    trace: Trace,
+    context: HookContext,
+) -> None:
     """Run the REPL loop."""
     while True:
         user = _read_input()
@@ -39,7 +45,7 @@ def _run_repl(messages: list[dict], trace: Trace) -> None:
         if not user:
             continue
         messages.append({"role": "user", "content": user})
-        answer = loop.run(messages, trace)
+        answer = loop.run(messages, trace, context)
         if answer:
             print(f"\n{answer}")
         else:
@@ -70,21 +76,35 @@ def _parse_args(args: list[str]) -> argparse.Namespace:
 
 def _handle_auth(parsed: argparse.Namespace) -> None:
     """Handle auth subcommand execution."""
+    from pelmeni import auth  # noqa: PLC0415
     if parsed.auth_subcommand != "login":
         print("error: unknown auth command", file=sys.stderr)
         sys.exit(1)
 
-    auth_manager = AuthManager()
+    auth_manager = auth.AuthManager()
     try:
         auth_manager.login(
             parsed.provider,
             api_key=parsed.api_key,
             client_id=parsed.client_id,
         )
-    except AuthError as exc:
+    except auth.AuthError as exc:
         print(f"error: auth failed: {exc}", file=sys.stderr)
         sys.exit(1)
     print(f"Successfully logged in for '{parsed.provider}'.")
+
+
+def _setup_session() -> tuple[list[dict], Trace, HookContext]:
+    """Configure providers and hooks, then create session state."""
+    provider.configure(agent="worker")
+    app_config = ConfigService().load()
+    loop.tools.configure_hooks(load_hooks(app_config, app_config.raw_hooks))
+    trace = Trace(Path.cwd())
+    return (
+        [{"role": "system", "content": SYSTEM_PROMPT}],
+        trace,
+        HookContext(agent_role="worker", session_id=trace.session_id),
+    )
 
 
 def main() -> None:
@@ -96,14 +116,12 @@ def main() -> None:
         return
 
     try:
-        provider.configure(agent="worker")
-    except (ConfigError, AuthError, provider.ProviderError) as exc:
+        messages, trace, context = _setup_session()
+    except (ConfigError, provider.ProviderError) as exc:
         print(f"error: configuration failed: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    trace = Trace(Path.cwd())
-    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
     print(f"pelmeni | {provider.describe()}")
     print(f"session trace: {trace.trace_file}")
     print("type your message; Ctrl-D or /exit to quit")
-    _run_repl(messages, trace)
+    _run_repl(messages, trace, context)
