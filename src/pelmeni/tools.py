@@ -6,11 +6,51 @@ import json
 import subprocess
 from typing import TYPE_CHECKING
 
-from pelmeni.dto.tools import Tool, ToolFunction
+from pelmeni.dto.tools import AgentRole, Tool, ToolFunction, ToolSpec
 
 if TYPE_CHECKING:
     from pelmeni.dto.hooks import HookContext
     from pelmeni.hooks.chain import HookChain
+
+
+class ToolRegistry:
+    """Store tool specifications and role-specific access permissions."""
+
+    def __init__(self) -> None:
+        """Initialize an empty registry for every supported role."""
+        self._tools: dict[str, ToolSpec] = {}
+        self._whitelists: dict[AgentRole, set[str]] = {
+            role: set() for role in AgentRole
+        }
+
+    def register(
+        self,
+        tool: ToolSpec,
+        roles: list[AgentRole] | None = None,
+    ) -> None:
+        """Register a tool and grant it to the selected roles."""
+        self._tools[tool.name] = tool
+        for whitelist in self._whitelists.values():
+            whitelist.discard(tool.name)
+        granted_roles = list(AgentRole) if roles is None else roles
+        for role in granted_roles:
+            self._whitelists[role].add(tool.name)
+
+    def get_tools_for_role(self, role: AgentRole) -> list[ToolSpec]:
+        """Return allowed tools in registration order."""
+        whitelist = self._whitelists[role]
+        return [
+            tool
+            for name, tool in self._tools.items()
+            if name in whitelist
+        ]
+
+    def is_tool_allowed(self, role: AgentRole, tool_name: str) -> bool:
+        """Return whether a registered tool is available to a role."""
+        return (
+            tool_name in self._tools
+            and tool_name in self._whitelists[role]
+        )
 
 
 BASH_TOOL = Tool(

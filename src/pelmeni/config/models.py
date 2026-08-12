@@ -8,6 +8,7 @@ class AgentModelSchema(BaseModel):
     """Reference from an agent role to a configured model alias."""
 
     model: str = Field(min_length=1)
+    tools: list[str] = Field(default_factory=list)
 
 
 class HookConfigSchema(BaseModel):
