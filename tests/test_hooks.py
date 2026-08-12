@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
+
+if TYPE_CHECKING:
+    import pytest
 
 from pelmeni import tools
 from pelmeni.config.models import HookConfigSchema, HooksSchema
 from pelmeni.config.service import AppConfig
 from pelmeni.dto.hooks import HookContext, HookResult
-from pelmeni.hooks.builtins import BlocklistHook, ConfirmPromptHook, PathGuardHook
+from pelmeni.hooks.builtins import (
+    BlocklistHook,
+    ConfirmPromptHook,
+    PathGuardHook,
+)
 from pelmeni.hooks.chain import HookChain
 from pelmeni.hooks.loader import load_hooks
 
@@ -117,7 +125,10 @@ def test_chain_short_circuits_on_deny() -> None:
         return_value=HookResult(verdict="deny", reason="not allowed"),
     )
     first.name = "first"
-    second = MagicMock(name="second_hook", return_value=HookResult(verdict="allow"))
+    second = MagicMock(
+        name="second_hook",
+        return_value=HookResult(verdict="allow"),
+    )
     second.name = "second"
     chain = HookChain(
         [first, second],
@@ -228,7 +239,10 @@ def test_load_hooks_custom_order() -> None:
     assert [hook.name for hook in chain.hooks] == ["path_guard", "blocklist"]
 
 
-def test_load_hooks_user_module(tmp_path: Path, monkeypatch) -> None:
+def test_load_hooks_user_module(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Load a hook object from a custom Python module."""
     hooks_dir = tmp_path / ".config" / "pelmeni" / "hooks"
     hooks_dir.mkdir(parents=True)
@@ -242,7 +256,7 @@ def test_load_hooks_user_module(tmp_path: Path, monkeypatch) -> None:
         "hook = CustomHook()\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(Path, "home", classmethod(lambda _: tmp_path))
     config = AppConfig(
         models={},
         agents={},
@@ -254,7 +268,9 @@ def test_load_hooks_user_module(tmp_path: Path, monkeypatch) -> None:
     assert [hook.name for hook in chain.hooks] == ["custom"]
 
 
-def test_dispatch_passes_context_to_hooks(monkeypatch) -> None:
+def test_dispatch_passes_context_to_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """tools.dispatch invokes the hook chain with the supplied context."""
     tool_call = _tool_call("bash", {"command": "ls"})
     context = _context()
