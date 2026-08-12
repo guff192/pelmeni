@@ -13,11 +13,11 @@ from pydantic import SecretStr
 if TYPE_CHECKING:
     from pathlib import Path
 from pelmeni.auth import AuthError, AuthManager
-from pelmeni.credentials import ApiKeyCredentials, NoCredentials
-from pelmeni.provider import ProviderError, ProviderRouter
-from pelmeni.providers._google_messages import GoogleMessageTranslator
+from pelmeni.dto import ApiKeyCredentials, NoCredentials
+from pelmeni.providers import ProviderError, ProviderRouter
 from pelmeni.providers.anthropic import AnthropicProvider
 from pelmeni.providers.google import GoogleProvider
+from pelmeni.providers.google.messages import GoogleMessageTranslator
 from pelmeni.providers.openai import OpenAIProvider
 from pelmeni.providers.openai_compatible import OpenAICompatibleProvider
 
@@ -139,7 +139,10 @@ def test_openai_success_text(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("httpx.Client.send", mock_send)
 
     provider = OpenAIProvider()
-    creds = ApiKeyCredentials(api_key=SecretStr("openai-key"))
+    creds = ApiKeyCredentials(
+        provider="openai",
+        api_key=SecretStr("openai-key"),
+    )
     res = provider.chat(
         messages=[{"role": "user", "content": "Hi"}],
         tools=None,
@@ -163,7 +166,10 @@ def test_openai_malformed_json_response(
     monkeypatch.setattr("httpx.Client.send", mock_send)
 
     provider = OpenAIProvider()
-    creds = ApiKeyCredentials(api_key=SecretStr("openai-key"))
+    creds = ApiKeyCredentials(
+        provider="openai",
+        api_key=SecretStr("openai-key"),
+    )
     with pytest.raises(ProviderError):
         provider.chat(
             messages=[{"role": "user", "content": "Hi"}],
@@ -202,7 +208,7 @@ def test_openai_compatible_provider_no_auth(
         messages=[{"role": "user", "content": "hi"}],
         tools=None,
         model="qwen3-8b",
-        credentials=NoCredentials(),
+        credentials=NoCredentials(provider="openai-compatible"),
     )
     assert res["choices"][0]["message"]["content"] == "Local model response"
     request = mock_send.call_args[0][0]
@@ -229,7 +235,7 @@ def test_openai_compatible_http_error(
             messages=[{"role": "user", "content": "hi"}],
             tools=None,
             model="qwen3-8b",
-            credentials=NoCredentials(),
+            credentials=NoCredentials(provider="openai-compatible"),
         )
 
 
@@ -267,7 +273,10 @@ def test_anthropic_multiple_tool_calls_and_json_args(
     mock_send = MagicMock(return_value=resp)
     monkeypatch.setattr("httpx.Client.send", mock_send)
 
-    creds = ApiKeyCredentials(api_key=SecretStr("anthropic-test-key"))
+    creds = ApiKeyCredentials(
+        provider="anthropic",
+        api_key=SecretStr("anthropic-test-key"),
+    )
     tools: list[dict[str, Any]] = [
         {
             "type": "function",
@@ -347,7 +356,10 @@ def test_anthropic_tool_result_formatting(
     mock_send = MagicMock(return_value=resp)
     monkeypatch.setattr("httpx.Client.send", mock_send)
 
-    creds = ApiKeyCredentials(api_key=SecretStr("anthropic-key"))
+    creds = ApiKeyCredentials(
+        provider="anthropic",
+        api_key=SecretStr("anthropic-key"),
+    )
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "run tool"},
         {
@@ -398,7 +410,10 @@ def test_anthropic_malformed_response(
     mock_send = MagicMock(return_value=resp)
     monkeypatch.setattr("httpx.Client.send", mock_send)
 
-    creds = ApiKeyCredentials(api_key=SecretStr("anthropic-key"))
+    creds = ApiKeyCredentials(
+        provider="anthropic",
+        api_key=SecretStr("anthropic-key"),
+    )
 
     monkeypatch.setattr(
         "pelmeni.providers.anthropic.AnthropicProvider._extract_api_key",
@@ -447,13 +462,17 @@ def test_google_multiple_tool_calls_and_json_args(
     )
     resp.request = httpx.Request(
         "POST",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-1.5-pro:generateContent",
     )
 
     mock_send = MagicMock(return_value=resp)
     monkeypatch.setattr("httpx.Client.send", mock_send)
 
-    creds = ApiKeyCredentials(api_key=SecretStr("google-test-key"))
+    creds = ApiKeyCredentials(
+        provider="google",
+        api_key=SecretStr("google-test-key"),
+    )
     tools: list[dict[str, Any]] = [
         {
             "type": "function",
@@ -524,13 +543,17 @@ def test_google_tool_response_handling(
     )
     resp.request = httpx.Request(
         "POST",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-1.5-flash:generateContent",
     )
 
     mock_send = MagicMock(return_value=resp)
     monkeypatch.setattr("httpx.Client.send", mock_send)
 
-    creds = ApiKeyCredentials(api_key=SecretStr("google-key"))
+    creds = ApiKeyCredentials(
+        provider="google",
+        api_key=SecretStr("google-key"),
+    )
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "run command"},
         {
@@ -579,13 +602,17 @@ def test_google_malformed_response(
     resp = httpx.Response(200, content=b"invalid json {")
     resp.request = httpx.Request(
         "POST",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-1.5-pro:generateContent",
     )
 
     mock_send = MagicMock(return_value=resp)
     monkeypatch.setattr("httpx.Client.send", mock_send)
 
-    creds = ApiKeyCredentials(api_key=SecretStr("google-key"))
+    creds = ApiKeyCredentials(
+        provider="google",
+        api_key=SecretStr("google-key"),
+    )
 
     monkeypatch.setattr(
         "pelmeni.providers.google.GoogleProvider._resolve_auth",
@@ -603,6 +630,7 @@ def test_google_malformed_response(
             model="gemini-1.5-pro",
             credentials=creds,
         )
+
 
 def test_google_translator_system_and_tool_consolidation() -> None:
     """Test system accumulation and adjacent tool consolidation."""

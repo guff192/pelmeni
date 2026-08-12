@@ -46,6 +46,10 @@ ignore = [
     "TD002",        # TODO author tag — too noisy for a small repo
     "TD003",        # TODO issue link — no issue tracker yet
     "FIX002",       # Fires on every TODO; TODOs are allowed
+    "ANN204",       # Constructors' implicit None return is unambiguous
+    "CPY001",       # Project does not use per-file copyright headers
+    "D102", "D107", # Class docstrings document straightforward methods
+    "T201",         # CLI and trace output intentionally use print
 ]
 
 # noqa codes from flake8/wemake-python-styleguide
