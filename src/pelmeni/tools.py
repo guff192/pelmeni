@@ -1,12 +1,22 @@
-"""Bash tool schema, dispatch, and execution."""
+# flake8: noqa: WPS226, WPS204
+# WPS226 & WPS204 (string literal & expression overuse) suppressed for this
+# file to keep JSON / OpenAI tool schema definitions clean and readable
+# without creating bloat constants (e.g. "type", "function", "string").
+"""Tool schema definitions, registry, dispatch, and execution."""
 
 from __future__ import annotations
 
 import json
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from pelmeni.dto.tools import AgentRole, Tool, ToolFunction, ToolSpec
+from pelmeni.dto.tools import (
+    AgentRole,
+    Tool,
+    ToolFunction,
+    ToolParameterSchema,
+    ToolSpec,
+)
 
 if TYPE_CHECKING:
     from pelmeni.dto.hooks import HookContext
@@ -45,12 +55,34 @@ class ToolRegistry:
             if name in whitelist
         ]
 
-    def is_tool_allowed(self, role: AgentRole, tool_name: str) -> bool:
+    def is_tool_allowed(self, role: AgentRole | str, tool_name: str) -> bool:
         """Return whether a registered tool is available to a role."""
+        try:
+            resolved_role = AgentRole(role)
+        except ValueError:
+            return False
         return (
             tool_name in self._tools
-            and tool_name in self._whitelists[role]
+            and tool_name in self._whitelists.get(resolved_role, set())
         )
+
+    def get_serialized_tools(
+        self,
+        role: AgentRole | str,
+    ) -> list[dict[str, Any]]:
+        """Serialize a role's allowed tools for provider function calling."""
+        resolved_role = AgentRole(role)
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters.model_dump(),
+                },
+            }
+            for tool in self.get_tools_for_role(resolved_role)
+        ]
 
 
 BASH_TOOL = Tool(
@@ -72,7 +104,7 @@ BASH_TOOL = Tool(
             "required": ["command"],
         },
     ),
-)  # noqa: WPS226
+)
 
 TOOLS = (BASH_TOOL,)
 
@@ -123,6 +155,102 @@ def execute_bash(command: str) -> str:
     return out
 
 
+def _standard_tool(
+    name: str,
+    description: str,
+    properties: dict[str, Any],
+    required: list[str],
+    handler: Any = None,  # noqa: ANN401
+) -> ToolSpec:
+    """Build one standard tool specification."""
+    return ToolSpec(
+        name=name,
+        description=description,
+        parameters=ToolParameterSchema(
+            properties=properties,
+            required=required,
+        ),
+        handler=handler,
+    )
+
+
+def _build_default_registry() -> ToolRegistry:
+    """Create the process-wide registry with role-specific permissions."""
+    registry = ToolRegistry()
+    path_property = {"path": {"type": "string"}}
+    standard_tools = {
+        "bash": _standard_tool(
+            "bash",
+            "Run a shell command and return its output.",
+            {"command": {"type": "string"}},
+            ["command"],
+            execute_bash,
+        ),
+        "read": _standard_tool(
+            "read", "Read a file or directory.", path_property, ["path"],
+        ),
+        "grep": _standard_tool(
+            "grep",
+            "Search files for a regular expression.",
+            {
+                "pattern": {"type": "string"},
+                "path": {"type": "string"},
+            },
+            ["pattern", "path"],
+        ),
+        "glob": _standard_tool(
+            "glob",
+            "Find paths matching a glob pattern.",
+            path_property,
+            ["path"],
+        ),
+        "lsp": _standard_tool(
+            "lsp",
+            "Query language-server information.",
+            {
+                "operation": {"type": "string"},
+                "path": {"type": "string"},
+            },
+            ["operation", "path"],
+        ),
+        "edit": _standard_tool(
+            "edit",
+            "Apply a surgical edit to an existing file.",
+            {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+            },
+            ["path", "content"],
+        ),
+        "write": _standard_tool(
+            "write",
+            "Create or overwrite a file.",
+            {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+            },
+            ["path", "content"],
+        ),
+    }
+    role_tools = {
+        AgentRole.INVESTIGATOR: ("grep", "glob", "lsp", "read"),
+        AgentRole.BUILDER: ("read", "edit", "write", "bash"),
+        AgentRole.REVIEWER: ("read", "grep", "lsp", "bash"),
+        AgentRole.TESTER: ("bash", "write", "read"),
+    }
+    for name, tool in standard_tools.items():
+        roles = [
+            role
+            for role, allowed_names in role_tools.items()
+            if name in allowed_names
+        ]
+        registry.register(tool, roles=roles)
+    return registry
+
+
+DEFAULT_REGISTRY: ToolRegistry = _build_default_registry()
+
+
 def _run_hooks(tool_call: dict, context: HookContext) -> dict | str:
     if _hook_chain is None:
         return tool_call
@@ -134,8 +262,20 @@ def _run_hooks(tool_call: dict, context: HookContext) -> dict | str:
     return tool_call
 
 
-def dispatch(tool_call: dict, context: HookContext) -> str:
-    """Execute one tool call from the model. Never raises."""
+def dispatch(
+    tool_call: dict[str, Any],
+    context: HookContext,
+    registry: ToolRegistry | None = None,
+) -> str:
+    """Execute one permitted tool call from the model. Never raises."""
+    active_registry = DEFAULT_REGISTRY if registry is None else registry
+    tool_name = tool_call["function"]["name"]
+    if not active_registry.is_tool_allowed(context.agent_role, tool_name):
+        return (
+            f"error: Tool '{tool_name}' is not permitted for role "
+            f"'{context.agent_role}'."
+        )
+
     processed_call = _run_hooks(tool_call, context)
     if isinstance(processed_call, str):
         return processed_call
@@ -147,11 +287,13 @@ def dispatch(tool_call: dict, context: HookContext) -> str:
     except json.JSONDecodeError as exc:
         return f"error: malformed tool arguments: {exc}"
 
+    spec = active_registry._tools.get(name)  # noqa: SLF001
+    if spec is None or spec.handler is None:
+        return f"error: unknown tool '{name}'"
+    try:
+        tool_result = spec.handler(**arguments)
+    except (TypeError, ValueError) as exc:
+        return f"error: invalid tool arguments: {exc}"
     if name == "bash":
-        command = arguments.get("command")
-        if not isinstance(command, str) or not command.strip():
-            return "error: missing or empty 'command' argument"
-        tool_result = execute_bash(command)
         print(f"\n── bash ──\n{tool_result}\n")
-        return tool_result
-    return f"error: unknown tool '{name}'"
+    return str(tool_result)
