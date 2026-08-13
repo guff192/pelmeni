@@ -25,7 +25,7 @@ from pelmeni.hooks.loader import load_hooks
 
 def _context() -> HookContext:
     """Create a hook context shared by unit tests."""
-    return HookContext(agent_role="worker", session_id="test1234")
+    return HookContext(agent_role="builder", session_id="test1234")
 
 
 def _tool_call(name: str, arguments: dict[str, str]) -> dict:
