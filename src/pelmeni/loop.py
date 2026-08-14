@@ -10,26 +10,28 @@ from __future__ import annotations
 
 import sys
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pelmeni import tools
+from pelmeni.dto.hooks import HookContext
+from pelmeni.dto.tools import AgentRole
 from pelmeni.providers import router as provider
 
 if TYPE_CHECKING:
-    from pelmeni.dto.hooks import HookContext
+    from pelmeni.tools import ToolRegistry  # noqa: WPS458
     from pelmeni.trace import Trace
-
 
 MAX_ITERATIONS = 25
 
 
 def _dispatch_tool(
-    messages: list[dict],
+    messages: list[dict[str, Any]],
     trace: Trace,
-    call: dict,
+    call: dict[str, Any],
     context: HookContext,
+    registry: ToolRegistry,
 ) -> HookContext:
-    tool_result = tools.dispatch(call, context)
+    tool_result = tools.dispatch(call, context, registry=registry)
     trace.log(
         "tool_result",
         {"tool_call_id": call["id"], "result": tool_result},
@@ -44,26 +46,34 @@ def _dispatch_tool(
     return replace(context, tool_history=(*context.tool_history, call))
 
 
-def run(
-    messages: list[dict],
+def run(  # noqa: WPS210
+    messages: list[dict[str, Any]],
     trace: Trace,
-    context: HookContext,
-) -> str | None:
+    context: HookContext | None = None,
+    registry: ToolRegistry | None = None,
+) -> str:
     """Run the loop until the model answers without tool calls.
 
-    Mutates `messages` in place (that's the point — the list IS the state).
-    Returns the final assistant text, or None if the iteration cap hit.
+    Returns the final assistant text, or an empty string on failure.
     """
+    active_registry = tools.DEFAULT_REGISTRY if registry is None else registry
+    active_context = context or HookContext(
+        agent_role=AgentRole.BUILDER,
+        session_id="default",
+    )
+    serialized_tools = active_registry.get_serialized_tools(
+        active_context.agent_role,
+    )
     for _ in range(MAX_ITERATIONS):
         trace.log(
             "request",
-            {"messages": messages, "tools": tools.SERIALIZED_TOOLS},
+            {"messages": messages, "tools": serialized_tools},
         )
         try:
-            resp = provider.chat(messages, tools.SERIALIZED_TOOLS)
+            resp = provider.chat(messages, serialized_tools)
         except provider.ProviderError as exc:
             print(f"error: LLM request failed: {exc}", file=sys.stderr)
-            return None
+            return ""
         trace.log("response", resp)
 
         msg = resp["choices"][0]["message"]
@@ -74,7 +84,13 @@ def run(
             return msg.get("content") or ""
 
         for call in tool_calls:
-            context = _dispatch_tool(messages, trace, call, context)
+            active_context = _dispatch_tool(
+                messages,
+                trace,
+                call,
+                active_context,
+                active_registry,
+            )
 
     print(f"error: iteration cap ({MAX_ITERATIONS}) reached", file=sys.stderr)
-    return None
+    return ""
