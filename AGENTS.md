@@ -342,7 +342,7 @@ Vertical slice first; each step ends with something runnable:
 1. **Core loop + bash tool + one agent** — ✅ done (`src/pelmeni/`): multi-turn REPL session with one agent, bash tool with timeout + temp blocklist, JSONL traces per session
 2. **Provider layer + `config.toml`** — ✅ done (`src/pelmeni/`): OpenAI + Anthropic + Google + OpenAI-compatible, per-agent model routing, credential store, Google OAuth device flow, provider facade
 3. **Tool hooks** — ✅ done (`src/pelmeni/hooks/`): middleware chain with blocklist, path guards, confirm-prompt
-4. **Tool registry + 4 agent types** — role whitelists enforced
+4. **Tool registry + 4 agent types** — ✅ done (`src/pelmeni/tools.py`): role whitelists enforced (`investigator`, `builder`, `reviewer`, `tester`)
 5. **Redis bus** — two agents talking through Pub/Sub
 6. **Context compaction** — summarize old messages when over token budget
 7. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
@@ -425,6 +425,18 @@ The project architecture underwent a comprehensive modular refactoring to elimin
 - **Wiring & Dispatch**: `tools.dispatch()` gates all tool execution through `HookChain.run()`; `loop.run()` propagates context and history; `cli.py` initializes config-driven hooks.
 
 ### 6. Quality & Verification Gates
-- **Pytest**: 100% test coverage green (50 passed tests).
-- **Mypy**: Strict static typing passes (0 errors across 51 source files).
+- **Pytest**: 100% test coverage green (64 passed tests).
+- **Mypy**: Strict static typing passes (0 errors across source files).
 - **Ruff & Flake8**: 0 diagnostics / 0 WPS violations across the entire codebase.
+
+### 7. Tool Registry & 4 Agent Types Subsystem (`src/pelmeni/tools.py`, `src/pelmeni/dto/tools.py`)
+- **Build Step 4 Complete**: Implemented domain-level tool registry and role-based tool whitelisting for 4 agent types.
+- **DTOs & Roles**: Defined `AgentRole` enum (`investigator`, `builder`, `reviewer`, `tester`), `ToolParameterSchema`, and `ToolSpec` in `src/pelmeni/dto/tools.py`.
+- **ToolRegistry & Permission Gating**:
+  - `ToolRegistry` manages tool specifications and role-specific whitelists.
+  - `get_serialized_tools(role)` generates provider-compatible function tool schemas for role-permitted tools.
+  - `tools.dispatch()` enforces role permission checks before hook middleware execution.
+- **Loop & Config Integration**:
+  - `loop.run()` passes role-filtered tool schemas to `provider.chat()` and forwards `registry` to `dispatch()`.
+  - `AgentModelSchema` in `src/pelmeni/config/models.py` supports optional `tools: list[str]` overrides per role.
+- **Test Suite**: Added contract test suites in `tests/test_tool_models.py` and `tests/test_tool_interfaces.py` (64 total tests passing).
