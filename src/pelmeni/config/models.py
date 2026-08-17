@@ -1,4 +1,5 @@
 """Validation models for application configuration."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
@@ -25,12 +26,19 @@ class HooksSchema(BaseModel):
     chain: list[str] = Field(default_factory=list)
 
 
+class RedisSchema(BaseModel):
+    """Redis bus connection configuration."""
+
+    url: str = "redis://localhost:6379/0"
+
+
 class AppConfigSchema(BaseModel):
     """Validated shape of the TOML configuration document."""
 
     models: dict[str, str] = Field(min_length=1)
     agents: dict[str, AgentModelSchema] = Field(min_length=1)
     hooks: HooksSchema | None = None
+    redis: RedisSchema = Field(default_factory=RedisSchema)
 
 
 class ModelSpec(BaseModel):
