@@ -96,14 +96,14 @@ def _handle_auth(parsed: argparse.Namespace) -> None:
 
 def _setup_session() -> tuple[list[dict], Trace, HookContext]:
     """Configure providers and hooks, then create session state."""
-    provider.configure(agent="worker")
+    provider.configure(agent="reviewer")
     app_config = ConfigService().load()
     loop.tools.configure_hooks(load_hooks(app_config, app_config.raw_hooks))
     trace = Trace(Path.cwd())
     return (
         [{"role": "system", "content": SYSTEM_PROMPT}],
         trace,
-        HookContext(agent_role="worker", session_id=trace.session_id),
+        HookContext(agent_role="reviewer", session_id=trace.session_id),
     )
 
 
