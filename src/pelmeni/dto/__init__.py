@@ -7,6 +7,11 @@ from pelmeni.dto.bus import (  # noqa: F401
     TaskPayload,
     TaskStatus,
 )
+from pelmeni.dto.context import (  # noqa: F401
+    CompactionConfigSchema,
+    CompactionResult,
+    CompactionStrategy,
+)
 from pelmeni.dto.credentials import (  # noqa: F401
     ApiKeyCredentials,
     Credentials,
