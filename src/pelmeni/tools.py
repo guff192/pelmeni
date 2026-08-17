@@ -124,8 +124,6 @@ def configure_hooks(chain: HookChain) -> None:
 def execute_bash(command: str) -> str:
     """Run a command, return a plain-text result for the tool message."""
     try:
-        # TODO: replace raw shell=True with hook-gated two-tier tool (step 3):
-        # safe `run` (shlex.split, no shell) + `bash` (shell, hook-gated).
         # shell=True is intentional — the bash tool's contract is raw shell
         # access for agents; governance belongs to the hook middleware,
         # not to crippling the tool with shell=False.

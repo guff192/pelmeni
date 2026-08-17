@@ -9,6 +9,7 @@ requires-python = ">=3.14"
 dependencies = [
     "httpx>=0.28.1",
     "pydantic>=2.13.4",
+    "redis>=5.0.0",
 ]
 
 [project.scripts]
@@ -23,6 +24,7 @@ dev = [
     "flake8>=7.3.0",
     "mypy>=2.3.0",
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
     "ruff>=0.16.1",
     "ty>=0.0.69",
     "wemake-python-styleguide>=1.7.1",

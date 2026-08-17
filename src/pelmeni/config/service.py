@@ -12,6 +12,7 @@ from pelmeni.config.models import (
     AppConfigSchema,
     HooksSchema,
     ModelSpec,
+    RedisSchema,
 )
 from pelmeni.config.parser import ConfigError, load_toml, parse_model_spec
 
@@ -28,11 +29,12 @@ def _extract_raw_hooks(raw_config: dict[str, object]) -> dict[str, dict]:
     hooks_table = raw_config.get("hooks", {})
     if not isinstance(hooks_table, dict):
         return {}
-    return {
-        name: hook_data
-        for name, hook_data in hooks_table.items()
-        if name != "chain" and isinstance(hook_data, dict)
-    }
+    raw_hooks = {}
+    for name, hook_data in hooks_table.items():
+        if name != "chain" or not isinstance(hook_data, dict):
+            continue
+        raw_hooks[name] = hook_data
+    return raw_hooks
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,7 @@ class AppConfig:
     agents: dict[str, AgentModelSchema]
     hooks: HooksSchema | None = None
     raw_hooks: dict[str, dict] = field(default_factory=dict)
+    redis: RedisSchema = field(default_factory=RedisSchema)
 
 
 class ConfigService:
@@ -69,6 +72,7 @@ class ConfigService:
             agents=self._validate_agents(validated.agents, models),
             hooks=validated.hooks,
             raw_hooks=_extract_raw_hooks(raw_config),
+            redis=validated.redis,
         )
 
     def resolve(

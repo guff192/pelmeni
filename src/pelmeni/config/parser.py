@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tomllib
-from typing import TYPE_CHECKING, Never
+from typing import TYPE_CHECKING, Any, Never
 
 from pelmeni.config.models import ModelSpec
 
@@ -21,7 +21,7 @@ def _raise_config_error(message: str, cause: Exception | None = None) -> Never:
     raise ConfigError(message)
 
 
-def load_toml(path: Path) -> dict[str, object]:
+def load_toml(path: Path) -> dict[str, Any]:
     """Load and decode a TOML configuration document."""
     try:
         raw_text = path.read_text(encoding="utf-8")
