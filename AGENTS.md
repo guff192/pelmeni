@@ -343,7 +343,7 @@ Vertical slice first; each step ends with something runnable:
 2. **Provider layer + `config.toml`** — ✅ done (`src/pelmeni/`): OpenAI + Anthropic + Google + OpenAI-compatible, per-agent model routing, credential store, Google OAuth device flow, provider facade
 3. **Tool hooks** — ✅ done (`src/pelmeni/hooks/`): middleware chain with blocklist, path guards, confirm-prompt
 4. **Tool registry + 4 agent types** — ✅ done (`src/pelmeni/tools.py`): role whitelists enforced (`investigator`, `builder`, `reviewer`, `tester`)
-5. **Redis bus** — two agents talking through Pub/Sub
+5. **Redis bus** — ✅ done (`src/pelmeni/bus/`): two agents talking through Pub/Sub, queues, and shared state
 6. **Context compaction** — summarize old messages when over token budget
 7. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
 
@@ -356,6 +356,7 @@ src/pelmeni/
 ├── loop.py                 # Core agent loop (~100 lines)
 ├── tools.py                # Tool registry & hook middleware chain
 ├── trace.py                # Session trace logging
+├── bus/                  # Redis async communication bus (Pub/Sub, queues, state)
 ├── dto/                    # Pydantic Data Transfer Objects & hook DTOs
 ├── auth/                   # Credentials management & Chain of Responsibility resolver
 ├── hooks/                  # Tool call middleware chain & built-in hooks
@@ -425,7 +426,7 @@ The project architecture underwent a comprehensive modular refactoring to elimin
 - **Wiring & Dispatch**: `tools.dispatch()` gates all tool execution through `HookChain.run()`; `loop.run()` propagates context and history; `cli.py` initializes config-driven hooks.
 
 ### 6. Quality & Verification Gates
-- **Pytest**: 100% test coverage green (64 passed tests).
+- **Pytest**: 100% test coverage green (79 passed tests).
 - **Mypy**: Strict static typing passes (0 errors across source files).
 - **Ruff & Flake8**: 0 diagnostics / 0 WPS violations across the entire codebase.
 
@@ -440,3 +441,18 @@ The project architecture underwent a comprehensive modular refactoring to elimin
   - `loop.run()` passes role-filtered tool schemas to `provider.chat()` and forwards `registry` to `dispatch()`.
   - `AgentModelSchema` in `src/pelmeni/config/models.py` supports optional `tools: list[str]` overrides per role.
 - **Test Suite**: Added contract test suites in `tests/test_tool_models.py` and `tests/test_tool_interfaces.py` (64 total tests passing).
+
+### 8. Redis Bus & Multi-Agent Communication Subsystem (`src/pelmeni/bus/`, `src/pelmeni/dto/bus.py`)
+- **Build Step 5 Complete**: Implemented async Redis messaging bus for multi-agent coordination.
+- **Domain DTOs & Enums**:
+  - Enums: `AgentStatus` (`idle`, `busy`, `offline`), `TaskStatus` (`pending`, `in_progress`, `completed`, `failed`), `MessageType` (`task`, `result`, `status`, `event`).
+  - Payloads: `TaskPayload`, `ResultPayload`, `StatusPayload`, and polymorphic envelope `BusMessage`.
+- **RedisBus Adapter (`src/pelmeni/bus/redis_bus.py`)**:
+  - Async engine using `redis.asyncio` with `asyncio.Lock` lifecycle management.
+  - **Pub/Sub**: `publish(channel, message)` for broadcasting events and results.
+  - **Task Queues**: `push_task(queue, task)` and `pop_task(queue, timeout)` with `ValidationError` protection against malformed payloads.
+  - **Shared State**: `set_state(agent_id, key, val)` and `get_state(agent_id, key)` with transparent namespacing (`pelmeni:agent:*`, `pelmeni:queue:*`, `pelmeni:channel:*`).
+- **Configuration Integration**:
+  - `RedisSchema` added to `config/models.py` and `AppConfig` with default connection URL.
+- **End-to-End Multi-Agent Integration**:
+  - Added `tests/test_agent_bus_integration.py` proving orchestrator and worker task delegation, result Pub/Sub, and state coordination (79 total tests passing).
