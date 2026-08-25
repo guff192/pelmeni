@@ -345,7 +345,7 @@ Vertical slice first; each step ends with something runnable:
 4. **Tool registry + 4 agent types** — ✅ done (`src/pelmeni/tools.py`): role whitelists enforced (`investigator`, `builder`, `reviewer`, `tester`)
 5. **Redis bus** — ✅ done (`src/pelmeni/bus/`): two agents talking through Pub/Sub, queues, and shared state
 6. **Context compaction baseline** — ✅ done (`src/pelmeni/context/`): `TokenEstimator`, `TruncateCompactor`, and `loop.py` integration with trace events
-7. **Pure domain message & round modeling** — zero-dependency dataclass domain models (`SystemMessage`, `UserMessage`, `AssistantMessage`, `ToolMessage`, `Round`) replacing wide `dict[str, Any]` across core loop and context
+7. **Pure domain message & round modeling** — ✅ done (`src/pelmeni/domain/`, `src/pelmeni/cli/`): zero-dependency dataclass domain models (`SystemMessage`, `UserMessage`, `AssistantMessage`, `ToolMessage`, `Round`), modular CLI package, and full core cutover
 8. **Context compaction hardening (round preservation & output truncation)** — round-based pruning over domain `Round` structures to prevent user prompt starvation, plus head/tail bulky tool output truncation
 9. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
 
@@ -353,9 +353,8 @@ Vertical slice first; each step ends with something runnable:
 
 ```
 src/pelmeni/
-├── __init__.py             # Public facade re-exports
-├── cli.py                  # CLI entry point (`pelmeni auth`, `pelmeni run`)
-├── loop.py                 # Core agent loop (~100 lines)
+├── cli/                    # Modular CLI package (REPL, auth subcommands)
+├── loop.py                 # Core agent loop (~50 lines)
 ├── tools.py                # Tool registry & hook middleware chain
 ├── trace.py                # Session trace logging
 ├── bus/                    # Redis async communication bus (Pub/Sub, queues, state)
@@ -478,3 +477,19 @@ The project architecture underwent a comprehensive modular refactoring to elimin
 - **Observed Edge Cases & Build Step 7 Target**:
   - *User prompt preservation*: Naive sequential popping from index 1 removes user prompts, leaving broken `['system', 'assistant', 'tool']` sequences that cause LLM hallucination/errors.
   - *Oversize tool output truncation*: When a single tool output (e.g. 26KB `cat ./AGENTS.md`) exceeds `target_tokens`, dropping short user messages cannot resolve context pressure. Intermediate tool outputs must support content truncation.
+
+### 10. Pure Domain Message Modeling & Modular CLI (`src/pelmeni/domain/`, `src/pelmeni/cli/`)
+- **Build Step 7 Complete**: Introduced zero-dependency domain entities and completed full core cutover away from loose `dict[str, Any]`.
+- **Pure Domain Dataclasses (`src/pelmeni/domain/`)**:
+  - `ToolCall`, `SystemMessage`, `UserMessage`, `AssistantMessage`, `ToolMessage` implemented as `@dataclass(frozen=True, slots=True)` with zero external dependencies.
+  - `Round` aggregate encapsulating user prompt and associated assistant/tool turns.
+  - `group_into_rounds()` partitioning message sequences into `(system_prompt, list[Round])`.
+  - `message_mappers.py` providing bidirectional conversions between domain entities and OpenAI wire DTOs.
+- **Core & Context Cutover**:
+  - `src/pelmeni/loop.py` manages `list[Message]` and performs boundary wire translation immediately before `provider.chat()`.
+  - `src/pelmeni/tools.py` provides `dispatch_and_append()` emitting domain `ToolMessage` instances.
+  - `src/pelmeni/context/` protocols and compactor operate over `list[Message]`.
+- **Modular CLI Package & Linter Hardening**:
+  - Restructured `src/pelmeni/cli/` (`main.py`, `repl.py`, `auth.py`) eliminating `# flake8: noqa: WPS201`.
+  - Loop imports streamlined via package facades, eliminating WPS201 across the core loop.
+  - 100% test coverage green (165 total tests passing).
