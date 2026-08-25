@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     import pytest
 
 from pelmeni import loop, tools
+from pelmeni.domain.messages import UserMessage
 from pelmeni.dto.hooks import HookContext
 from pelmeni.dto.tools import AgentRole, ToolParameterSchema, ToolSpec
 from pelmeni.tools import ToolRegistry
@@ -144,7 +145,7 @@ def test_loop_passes_role_filtered_tools_to_provider(
         }
     )
     monkeypatch.setattr(loop.provider, "chat", chat)
-    messages = [{"role": "user", "content": "inspect"}]
+    messages = [UserMessage(content="inspect")]
     trace = MagicMock()
     context = _context(AgentRole.INVESTIGATOR)
 
@@ -155,8 +156,10 @@ def test_loop_passes_role_filtered_tools_to_provider(
         AgentRole.INVESTIGATOR,
     )
     provider_messages, provider_tools = chat.call_args.args
-    assert provider_messages is messages
+    # Loop serializes domain messages to dicts at the provider boundary.
+    assert provider_messages == [{"role": "user", "content": "inspect"}]
     assert provider_tools == serialized_tools
+
 
 def test_tools_exports_default_registry() -> None:
     """Callers can import the process-wide default tool registry."""

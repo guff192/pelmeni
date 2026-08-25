@@ -7,6 +7,11 @@ from pelmeni.dto.bus import (  # noqa: F401
     TaskPayload,
     TaskStatus,
 )
+from pelmeni.dto.context import (  # noqa: F401
+    CompactionConfigSchema,
+    CompactionResult,
+    CompactionStrategy,
+)
 from pelmeni.dto.credentials import (  # noqa: F401
     ApiKeyCredentials,
     Credentials,
@@ -23,5 +28,9 @@ from pelmeni.dto.messages import (  # noqa: F401
     UserMessage,
 )
 from pelmeni.dto.responses import ChatResponse, Choice  # noqa: F401
-from pelmeni.dto.tools import Tool, ToolFunction  # noqa: F401
+from pelmeni.dto.tools import (  # noqa: F401
+    AgentRole,
+    Tool,
+    ToolFunction,
+)
 from pelmeni.dto.trace import TraceEvent  # noqa: F401

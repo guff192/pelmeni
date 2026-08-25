@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from pelmeni.dto.context import CompactionConfigSchema
+
 
 class AgentModelSchema(BaseModel):
     """Reference from an agent role to a configured model alias."""
 
     model: str = Field(min_length=1)
     tools: list[str] = Field(default_factory=list)
+    compaction: CompactionConfigSchema | None = None
 
 
 class HookConfigSchema(BaseModel):
@@ -39,6 +42,9 @@ class AppConfigSchema(BaseModel):
     agents: dict[str, AgentModelSchema] = Field(min_length=1)
     hooks: HooksSchema | None = None
     redis: RedisSchema = Field(default_factory=RedisSchema)
+    compaction: CompactionConfigSchema = Field(
+        default_factory=CompactionConfigSchema,
+    )
 
 
 class ModelSpec(BaseModel):

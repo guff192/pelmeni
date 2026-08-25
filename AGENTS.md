@@ -344,25 +344,29 @@ Vertical slice first; each step ends with something runnable:
 3. **Tool hooks** — ✅ done (`src/pelmeni/hooks/`): middleware chain with blocklist, path guards, confirm-prompt
 4. **Tool registry + 4 agent types** — ✅ done (`src/pelmeni/tools.py`): role whitelists enforced (`investigator`, `builder`, `reviewer`, `tester`)
 5. **Redis bus** — ✅ done (`src/pelmeni/bus/`): two agents talking through Pub/Sub, queues, and shared state
-6. **Context compaction** — summarize old messages when over token budget
-7. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
+6. **Context compaction baseline** — ✅ done (`src/pelmeni/context/`): `TokenEstimator`, `TruncateCompactor`, and `loop.py` integration with trace events
+7. **Pure domain message & round modeling** — ✅ done (`src/pelmeni/domain/`, `src/pelmeni/cli/`): zero-dependency dataclass domain models (`SystemMessage`, `UserMessage`, `AssistantMessage`, `ToolMessage`, `Round`), modular CLI package, and full core cutover
+8. **Context compaction hardening (round preservation & output truncation)** — round-based pruning over domain `Round` structures to prevent user prompt starvation, plus head/tail bulky tool output truncation
+9. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
 
 ## 📁 Project Layout
 
 ```
 src/pelmeni/
-├── __init__.py             # Public facade re-exports
-├── cli.py                  # CLI entry point (`pelmeni auth`, `pelmeni run`)
-├── loop.py                 # Core agent loop (~100 lines)
+├── cli/                    # Modular CLI package (REPL, auth subcommands)
+├── loop.py                 # Core agent loop (~50 lines)
 ├── tools.py                # Tool registry & hook middleware chain
 ├── trace.py                # Session trace logging
-├── bus/                  # Redis async communication bus (Pub/Sub, queues, state)
+├── bus/                    # Redis async communication bus (Pub/Sub, queues, state)
+├── domain/                 # Pure Python zero-dependency domain entities (Messages, Rounds)
+├── context/                # Token estimation and context compaction engine
 ├── dto/                    # Pydantic Data Transfer Objects & hook DTOs
 ├── auth/                   # Credentials management & Chain of Responsibility resolver
 ├── hooks/                  # Tool call middleware chain & built-in hooks
 ├── providers/              # LLM Provider layer, router facade & factory registry
 └── config/                 # Pydantic boundary validation schemas & ConfigService facade
 ```
+
 
 - **Sessions**: `~/.pelmeni/sessions/<project-name>/<session-hash>/trace.jsonl` — every LLM request/response and tool result
 - **Dev model**: local LM Studio server (`localhost:1234`), `qwen/qwen3-8b`; API key is a placeholder constant until step 2
@@ -456,3 +460,36 @@ The project architecture underwent a comprehensive modular refactoring to elimin
   - `RedisSchema` added to `config/models.py` and `AppConfig` with default connection URL.
 - **End-to-End Multi-Agent Integration**:
   - Added `tests/test_agent_bus_integration.py` proving orchestrator and worker task delegation, result Pub/Sub, and state coordination (79 total tests passing).
+
+### 9. Context Compaction Subsystem (`src/pelmeni/context/`, `src/pelmeni/dto/context.py`)
+- **Build Step 6 Complete**: Implemented modular context compaction engine to prevent token budget exhaustion.
+- **Domain DTOs & Config**:
+  - `CompactionStrategy` enum (`truncate`, `summarize`), `CompactionResult`, and `CompactionConfigSchema` in `src/pelmeni/dto/context.py`.
+  - `CompactionConfigSchema` wired into `AgentModelSchema` and `AppConfigSchema` with per-agent override resolution in `ConfigService`.
+- **Protocols & Engine**:
+  - `TokenEstimator` protocol with `HeuristicEstimator` implementation (deterministic character/JSON calculation).
+  - `ContextCompactor` protocol with `TruncateCompactor` implementation.
+  - Re-exports centralized in `src/pelmeni/context/__init__.py`.
+- **Loop Integration (`src/pelmeni/loop.py`)**:
+  - Compaction runs at the start of each iteration before the LLM request.
+  - In-place mutation of `messages` list (`messages[:] = ...`).
+  - Trace observability logging `context_compacted` events.
+- **Observed Edge Cases & Build Step 7 Target**:
+  - *User prompt preservation*: Naive sequential popping from index 1 removes user prompts, leaving broken `['system', 'assistant', 'tool']` sequences that cause LLM hallucination/errors.
+  - *Oversize tool output truncation*: When a single tool output (e.g. 26KB `cat ./AGENTS.md`) exceeds `target_tokens`, dropping short user messages cannot resolve context pressure. Intermediate tool outputs must support content truncation.
+
+### 10. Pure Domain Message Modeling & Modular CLI (`src/pelmeni/domain/`, `src/pelmeni/cli/`)
+- **Build Step 7 Complete**: Introduced zero-dependency domain entities and completed full core cutover away from loose `dict[str, Any]`.
+- **Pure Domain Dataclasses (`src/pelmeni/domain/`)**:
+  - `ToolCall`, `SystemMessage`, `UserMessage`, `AssistantMessage`, `ToolMessage` implemented as `@dataclass(frozen=True, slots=True)` with zero external dependencies.
+  - `Round` aggregate encapsulating user prompt and associated assistant/tool turns.
+  - `group_into_rounds()` partitioning message sequences into `(system_prompt, list[Round])`.
+  - `message_mappers.py` providing bidirectional conversions between domain entities and OpenAI wire DTOs.
+- **Core & Context Cutover**:
+  - `src/pelmeni/loop.py` manages `list[Message]` and performs boundary wire translation immediately before `provider.chat()`.
+  - `src/pelmeni/tools.py` provides `dispatch_and_append()` emitting domain `ToolMessage` instances.
+  - `src/pelmeni/context/` protocols and compactor operate over `list[Message]`.
+- **Modular CLI Package & Linter Hardening**:
+  - Restructured `src/pelmeni/cli/` (`main.py`, `repl.py`, `auth.py`) eliminating `# flake8: noqa: WPS201`.
+  - Loop imports streamlined via package facades, eliminating WPS201 across the core loop.
+  - 100% test coverage green (165 total tests passing).

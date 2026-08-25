@@ -9,12 +9,10 @@ No SDK, no hidden machinery: every token sent to the model is visible in
 from __future__ import annotations
 
 import sys
-from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from pelmeni import tools
-from pelmeni.dto.hooks import HookContext
-from pelmeni.dto.tools import AgentRole
+from pelmeni import context as ctx
+from pelmeni import domain, dto, tools
 from pelmeni.providers import router as provider
 
 if TYPE_CHECKING:
@@ -24,67 +22,65 @@ if TYPE_CHECKING:
 MAX_ITERATIONS = 25
 
 
-def _dispatch_tool(
-    messages: list[dict[str, Any]],
-    trace: Trace,
-    call: dict[str, Any],
-    context: HookContext,
-    registry: ToolRegistry,
-) -> HookContext:
-    tool_result = tools.dispatch(call, context, registry=registry)
-    trace.log(
-        "tool_result",
-        {"tool_call_id": call["id"], "result": tool_result},
-    )
-    messages.append(
-        {
-            "role": "tool",
-            "tool_call_id": call["id"],
-            "content": tool_result,
-        }
-    )
-    return replace(context, tool_history=(*context.tool_history, call))
-
-
 def run(  # noqa: WPS210
-    messages: list[dict[str, Any]],
+    messages: list[domain.Message],
     trace: Trace,
-    context: HookContext | None = None,
+    context: dto.HookContext | None = None,
     registry: ToolRegistry | None = None,
+    compaction_config: dto.CompactionConfigSchema | None = None,
 ) -> str:
     """Run the loop until the model answers without tool calls.
 
     Returns the final assistant text, or an empty string on failure.
     """
     active_registry = tools.DEFAULT_REGISTRY if registry is None else registry
-    active_context = context or HookContext(
-        agent_role=AgentRole.BUILDER,
+    active_context = context or dto.HookContext(
+        agent_role=dto.AgentRole.BUILDER,
         session_id="default",
     )
     serialized_tools = active_registry.get_serialized_tools(
         active_context.agent_role,
     )
+    config = compaction_config or dto.CompactionConfigSchema()
+    compactor = ctx.get_default_compactor()
+
     for _ in range(MAX_ITERATIONS):
+        compact_result = compactor.compact(messages, config)
+        if compact_result.compacted:
+            messages[:] = compact_result.messages
+            trace.log(
+                "context_compacted",
+                {
+                    "original_count": compact_result.original_count,
+                    "compacted_count": compact_result.compacted_count,
+                    "tokens_before": compact_result.tokens_before,
+                    "tokens_after": compact_result.tokens_after,
+                },
+            )
+
+        serialized_messages = [domain.message_to_dto(msg) for msg in messages]
         trace.log(
             "request",
-            {"messages": messages, "tools": serialized_tools},
+            {"messages": serialized_messages, "tools": serialized_tools},
         )
         try:
-            resp = provider.chat(messages, serialized_tools)
+            resp = provider.chat(serialized_messages, serialized_tools)
         except provider.ProviderError as exc:
             print(f"error: LLM request failed: {exc}", file=sys.stderr)
             return ""
         trace.log("response", resp)
 
-        msg = resp["choices"][0]["message"]
-        messages.append(msg)
+        raw_msg = resp["choices"][0]["message"]
+        assistant_msg = domain.message_from_dto(raw_msg)
+        messages.append(assistant_msg)
 
-        tool_calls = msg.get("tool_calls")
-        if not tool_calls:
-            return msg.get("content") or ""
+        if not isinstance(assistant_msg, domain.AssistantMessage):
+            return assistant_msg.content or ""
+        if not assistant_msg.tool_calls:
+            return assistant_msg.content or ""
 
-        for call in tool_calls:
-            active_context = _dispatch_tool(
+        for call in assistant_msg.tool_calls:
+            active_context = tools.dispatch_and_append(
                 messages,
                 trace,
                 call,
