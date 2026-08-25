@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pelmeni.config.models import AgentModelSchema, AppConfigSchema
+from pelmeni.domain.messages import UserMessage
 from pelmeni.dto.context import (
     CompactionConfigSchema,
     CompactionResult,
@@ -19,13 +20,14 @@ def test_compaction_strategy_values() -> None:
 
 def test_compaction_result_fields() -> None:
     """CompactionResult DTO contains all required fields and validates types."""
+    msg = UserMessage(content="info")
     result = CompactionResult(
         compacted=True,
         original_count=5,
         compacted_count=1,
         tokens_before=100,
         tokens_after=20,
-        messages=[{"role": "info"}],
+        messages=[msg],
         strategy_used=CompactionStrategy.TRUNCATE,
     )
     assert result.compacted is True
@@ -33,7 +35,7 @@ def test_compaction_result_fields() -> None:
     assert result.compacted_count == 1
     assert result.tokens_before == 100
     assert result.tokens_after == 20
-    assert result.messages == [{"role": "info"}]
+    assert result.messages == [msg]
     assert result.strategy_used == CompactionStrategy.TRUNCATE
 
 

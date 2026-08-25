@@ -11,12 +11,18 @@ Tests cover:
 from __future__ import annotations
 
 import json
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 from pelmeni.context.compactor import TruncateCompactor, get_default_compactor
 from pelmeni.context.estimator import HeuristicEstimator, get_default_estimator
 from pelmeni.context.protocol import ContextCompactor, TokenEstimator
+from pelmeni.domain.message_mappers import message_to_dto
+from pelmeni.domain.messages import (
+    AssistantMessage,
+    Message,
+    SystemMessage,
+    UserMessage,
+)
 from pelmeni.dto.context import (
     CompactionConfigSchema,
     CompactionResult,
@@ -28,19 +34,31 @@ from pelmeni.providers.router import ProviderError
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _msg(role: str, content: str) -> dict[str, Any]:
-    """Return a minimal message dict."""
-    return {"role": role, "content": content}
+
+def _msg(role: str, content: str) -> Message:
+    """Return a minimal domain Message for the given role."""
+    if role == "system":
+        return SystemMessage(content=content)
+    if role == "assistant":
+        return AssistantMessage(content=content)
+    return UserMessage(content=content)
 
 
-def _char_len(message: dict[str, Any]) -> int:
+def _char_len(message: Message) -> int:
     """Expected length from HeuristicEstimator._message_len."""
-    return len(json.dumps(message, separators=(",", ":"), ensure_ascii=False))
+    return len(
+        json.dumps(
+            message_to_dto(message),
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
 # HeuristicEstimator unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestHeuristicEstimator:
     """Tests for HeuristicEstimator."""
@@ -70,10 +88,11 @@ class TestHeuristicEstimator:
         assert estimator.estimate_messages([msg]) == (
             estimator.estimate_message(msg)
         )
+
     def test_unicode_content_counted_as_single_chars(self) -> None:
         """Unicode characters are counted as individual code points."""
         estimator = HeuristicEstimator()
-        msg = {"role": "user", "content": "こんにちは"}
+        msg = UserMessage(content="こんにちは")
         result = estimator.estimate_message(msg)
         assert result == _char_len(msg)
 
@@ -89,9 +108,11 @@ class TestHeuristicEstimator:
         first_count = estimator.estimate_message(msg)
         assert first_count == estimator.estimate_message(msg)
 
+
 # ---------------------------------------------------------------------------
 # TruncateCompactor unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestTruncateCompactorDisabled:
     """Compactor with enabled=False must be a no-op."""
@@ -155,8 +176,9 @@ class TestTruncateCompactorAboveThreshold:
         self,
         count: int,
         content_len: int = 40,
-    ) -> list[dict[str, Any]]:
+    ) -> list[Message]:
         return [_msg("user", "a" * content_len) for _ in range(count)]
+
     def test_compaction_reduces_token_count(self) -> None:
         """After compaction tokens_after <= target_tokens."""
         estimator = HeuristicEstimator()
@@ -223,8 +245,8 @@ class TestTruncateCompactorSystemMessage:
             keep_recent_rounds=0,
         )
         result = compactor.compact(msgs, config)
-        assert result.messages[0]["role"] == "system"
-        assert result.messages[0]["content"] == "you are an assistant"
+        assert result.messages[0].role == "system"
+        assert result.messages[0].content == "you are an assistant"  # type: ignore[union-attr]
 
     def test_only_system_message_returns_as_is(self) -> None:
         """A single system message is not removed even at zero tokens."""
@@ -234,14 +256,14 @@ class TestTruncateCompactorSystemMessage:
         config = CompactionConfigSchema(max_tokens=1, target_tokens=0)
         result = compactor.compact(msgs, config)
         assert len(result.messages) == 1
-        assert result.messages[0]["role"] == "system"
+        assert result.messages[0].role == "system"
 
 
 class TestTruncateCompactorKeepRecentRounds:
     """keep_recent_rounds limits how many messages can be removed."""
 
     def test_keep_recent_rounds_respected(self) -> None:
-        """Compactor stops pruning when len(messages) == keep_recent_rounds."""
+        """Compactor stops pruning when rounds == keep_recent_rounds."""
         estimator = HeuristicEstimator()
         compactor = TruncateCompactor(estimator)
         msgs = [_msg("user", "a" * 50) for _ in range(10)]
@@ -271,6 +293,7 @@ class TestTruncateCompactorKeepRecentRounds:
 # Protocol conformance
 # ---------------------------------------------------------------------------
 
+
 class TestProtocolConformance:
     """TruncateCompactor satisfies ContextCompactor protocol."""
 
@@ -292,6 +315,7 @@ class TestProtocolConformance:
 # ---------------------------------------------------------------------------
 # Factory functions
 # ---------------------------------------------------------------------------
+
 
 class TestFactories:
     """get_default_estimator and get_default_compactor return valid objects."""
@@ -321,6 +345,7 @@ class TestFactories:
 # loop.run() integration tests
 # ---------------------------------------------------------------------------
 
+
 def _make_trace() -> MagicMock:
     """Return a MagicMock that satisfies the Trace interface."""
     trace = MagicMock()
@@ -335,7 +360,7 @@ def _make_registry() -> MagicMock:
     return registry
 
 
-def _provider_response(content: str) -> dict[str, Any]:
+def _provider_response(content: str) -> dict:
     """Construct a minimal successful provider response dict."""
     return {
         "choices": [
@@ -360,11 +385,10 @@ class TestLoopCompactionIntegration:
     ) -> None:
         """loop.run() calls provider once when tokens are below max_tokens."""
         mock_chat.return_value = _provider_response("hello")
-        msgs: list[dict[str, Any]] = [_msg("user", "hi")]
+        msgs: list[Message] = [_msg("user", "hi")]
         config = CompactionConfigSchema(max_tokens=100_000)
         trace = _make_trace()
         registry = _make_registry()
-
 
         result = run(
             msgs,
@@ -386,7 +410,7 @@ class TestLoopCompactionIntegration:
         """loop.run() logs event when messages exceed max_tokens."""
         mock_chat.return_value = _provider_response("done")
         # Build a large message history that exceeds the tiny max_tokens.
-        large_msgs: list[dict[str, Any]] = [
+        large_msgs: list[Message] = [
             _msg("user", "word " * 100) for _ in range(20)
         ]
         config = CompactionConfigSchema(
@@ -414,7 +438,7 @@ class TestLoopCompactionIntegration:
     ) -> None:
         """loop.run() mutates message list in-place on compaction."""
         mock_chat.return_value = _provider_response("ok")
-        original_msgs: list[dict[str, Any]] = [
+        original_msgs: list[Message] = [
             _msg("user", "a" * 100) for _ in range(20)
         ]
         initial_id = id(original_msgs)
@@ -438,7 +462,7 @@ class TestLoopCompactionIntegration:
         """System message at index 0 remains after compaction in the loop."""
         mock_chat.return_value = _provider_response("fine")
         system_content = "you are a helpful assistant"
-        msgs: list[dict[str, Any]] = [
+        msgs: list[Message] = [
             _msg("system", system_content),
             *[_msg("user", "b" * 60) for _ in range(15)],
         ]
@@ -450,9 +474,8 @@ class TestLoopCompactionIntegration:
         trace = _make_trace()
         registry = _make_registry()
 
-
         run(msgs, trace, registry=registry, compaction_config=config)
-        assert msgs[0]["content"] == system_content
+        assert msgs[0].content == system_content  # type: ignore[union-attr]
 
     @patch("pelmeni.loop.provider.chat")
     def test_loop_returns_empty_string_on_provider_error(
@@ -461,7 +484,7 @@ class TestLoopCompactionIntegration:
     ) -> None:
         """loop.run() returns '' when the provider raises ProviderError."""
         mock_chat.side_effect = ProviderError("api down")
-        msgs = [_msg("user", "hello")]
+        msgs: list[Message] = [_msg("user", "hello")]
         registry = _make_registry()
         trace = _make_trace()
         result = run(msgs, trace, registry=registry)
