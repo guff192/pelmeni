@@ -8,10 +8,13 @@ defined in ``pelmeni.context.protocol``.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from pelmeni.domain.message_mappers import message_to_dto
 
 if TYPE_CHECKING:
     from pelmeni.context.protocol import TokenEstimator
+    from pelmeni.domain.messages import Message
 
 
 class HeuristicEstimator:
@@ -22,19 +25,19 @@ class HeuristicEstimator:
     proof-of-concept compaction engine used in tests.
     """
 
-    def estimate_message(self, message: dict[str, Any]) -> int:
+    def estimate_message(self, message: Message) -> int:
         """Estimate tokens for a single message."""
         return self._message_len(message)
 
-    def estimate_messages(self, messages: list[dict[str, Any]]) -> int:
+    def estimate_messages(self, messages: list[Message]) -> int:
         """Estimate tokens for a list of messages."""
         return sum(self._message_len(msg) for msg in messages)
 
-    def _message_len(self, message: dict[str, Any]) -> int:
+    def _message_len(self, message: Message) -> int:
         """Return a deterministic length for message."""
         return len(
             json.dumps(
-                message,
+                message_to_dto(message),
                 separators=(",", ":"),
                 ensure_ascii=False,
             ),

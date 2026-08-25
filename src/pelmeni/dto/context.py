@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from pelmeni.domain.messages import Message  # noqa: TC001
 
 
 class CompactionStrategy(StrEnum):
@@ -18,12 +19,14 @@ class CompactionStrategy(StrEnum):
 class CompactionResult(BaseModel):
     """Result of a compaction operation."""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     compacted: bool
     original_count: int
     compacted_count: int
     tokens_before: int
     tokens_after: int
-    messages: list[dict[str, Any]] = Field(default_factory=list)
+    messages: list[Message] = Field(default_factory=list)
     strategy_used: CompactionStrategy
 
 

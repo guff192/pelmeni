@@ -8,9 +8,10 @@ representation) and respects the configuration options defined in
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pelmeni.context.estimator import get_default_estimator
+from pelmeni.domain.rounds import group_into_rounds
 from pelmeni.dto.context import (
     CompactionConfigSchema,
     CompactionResult,
@@ -19,6 +20,8 @@ from pelmeni.dto.context import (
 
 if TYPE_CHECKING:
     from pelmeni.context.protocol import ContextCompactor, TokenEstimator
+    from pelmeni.domain.messages import Message, SystemMessage
+    from pelmeni.domain.rounds import Round
 
 
 class TruncateCompactor:
@@ -30,9 +33,9 @@ class TruncateCompactor:
        unchanged.
     2. The total token count is estimated via the supplied ``estimator``.
     3. If the count exceeds ``config.max_tokens`` the algorithm removes the
-       oldest non-system messages until the count falls to or below
+       oldest non-system rounds until the count falls to or below
        ``config.target_tokens``, while keeping at least
-       ``config.keep_recent_rounds`` messages.
+       ``config.keep_recent_rounds`` rounds.
     4. The system message at index 0 is never pruned.
     5. A :class:`CompactionResult` describing the operation is returned.
     """
@@ -43,7 +46,7 @@ class TruncateCompactor:
 
     def compact(  # noqa: WPS210
         self,
-        messages: list[dict[str, Any]],
+        messages: list[Message],
         config: CompactionConfigSchema,
     ) -> CompactionResult:
         """Return a possibly shortened list of ``messages``.
@@ -80,16 +83,17 @@ class TruncateCompactor:
                 strategy_used=CompactionStrategy.TRUNCATE,
             )
 
+        system, rounds = group_into_rounds(messages)
         keep = max(config.keep_recent_rounds, 0)
-        truncated: list[dict[str, Any]] = list(messages)
         running_tokens = tokens_before
 
-        while running_tokens > config.target_tokens and len(truncated) > keep:
-            freed = self._prune_oldest_turn(truncated)
+        while running_tokens > config.target_tokens and len(rounds) > keep:
+            freed = self._prune_oldest_round(rounds)
             if freed <= 0:
                 break
             running_tokens -= freed
 
+        truncated = self._flatten(system, rounds)
         return CompactionResult(
             compacted=True,
             original_count=len(messages),
@@ -100,34 +104,34 @@ class TruncateCompactor:
             strategy_used=CompactionStrategy.TRUNCATE,
         )
 
-    def _prune_oldest_turn(self, truncated: list[dict[str, Any]]) -> int:
-        """Prune oldest non-system message and any paired tool outputs."""
-        pop_index = int(
-            bool(truncated and truncated[0].get("role") == "system"),
-        )
-        if pop_index >= len(truncated):
+    def _prune_oldest_round(self, rounds: list[Round]) -> int:
+        """Remove the oldest round and return freed token count."""
+        if not rounds:
             return 0
-        removed = truncated.pop(pop_index)
-        freed_tokens = self._estimator.estimate_message(removed)
-        if removed.get("role") == "assistant" and removed.get("tool_calls"):
-            call_ids = {
-                tool_call.get("id")
-                for tool_call in removed.get("tool_calls", [])
-            }
-            while pop_index < len(truncated):
-                if truncated[pop_index].get("role") != "tool":
-                    break
-                if truncated[pop_index].get("tool_call_id") not in call_ids:
-                    break
-                tool_msg = truncated.pop(pop_index)
-                freed_tokens += self._estimator.estimate_message(tool_msg)
-        return freed_tokens
+        oldest = rounds.pop(0)
+        return sum(
+            self._estimator.estimate_message(msg)
+            for msg in oldest.all_messages
+        )
+
+    def _flatten(
+        self,
+        system: SystemMessage | None,
+        rounds: list[Round],
+    ) -> list[Message]:
+        """Re-flatten system message and rounds into a message list."""
+        flattened: list[Message] = []
+        if system is not None:
+            flattened.append(system)
+        for rnd in rounds:
+            flattened.extend(rnd.all_messages)
+        return flattened
 
 
 def get_default_compactor() -> ContextCompactor:
     """Factory returning a default :class:`ContextCompactor` implementation.
 
-    The default uses the heuristic token estimator defined in
-    ``pelmeni.context.estimator``.
+    The compactor can be replaced with a summarisation-based implementation
+    without touching call sites.
     """
     return TruncateCompactor(get_default_estimator())
