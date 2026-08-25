@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from pelmeni.domain.messages import Message, ToolCall, ToolMessage
 from pelmeni.dto.tools import (
     AgentRole,
     Tool,
@@ -21,6 +23,7 @@ from pelmeni.dto.tools import (
 if TYPE_CHECKING:
     from pelmeni.dto.hooks import HookContext
     from pelmeni.hooks.chain import HookChain
+    from pelmeni.trace import Trace
 
 
 class ToolRegistry:
@@ -49,11 +52,7 @@ class ToolRegistry:
     def get_tools_for_role(self, role: AgentRole) -> list[ToolSpec]:
         """Return allowed tools in registration order."""
         whitelist = self._whitelists[role]
-        return [
-            tool
-            for name, tool in self._tools.items()
-            if name in whitelist
-        ]
+        return [tool for name, tool in self._tools.items() if name in whitelist]
 
     def is_tool_allowed(self, role: AgentRole | str, tool_name: str) -> bool:
         """Return whether a registered tool is available to a role."""
@@ -61,9 +60,8 @@ class ToolRegistry:
             resolved_role = AgentRole(role)
         except ValueError:
             return False
-        return (
-            tool_name in self._tools
-            and tool_name in self._whitelists.get(resolved_role, set())
+        return tool_name in self._tools and tool_name in self._whitelists.get(
+            resolved_role, set()
         )
 
     def get_serialized_tools(
@@ -185,7 +183,10 @@ def _build_default_registry() -> ToolRegistry:
             execute_bash,
         ),
         "read": _standard_tool(
-            "read", "Read a file or directory.", path_property, ["path"],
+            "read",
+            "Read a file or directory.",
+            path_property,
+            ["path"],
         ),
         "grep": _standard_tool(
             "grep",
@@ -295,3 +296,27 @@ def dispatch(
     if name == "bash":
         print(f"\n── bash ──\n{tool_result}\n")
     return str(tool_result)
+
+
+def dispatch_and_append(
+    messages: list[Message],
+    trace: Trace,
+    call: ToolCall,
+    context: HookContext,
+    registry: ToolRegistry,
+) -> HookContext:
+    """Dispatch a tool call, append ToolMessage, and update context."""
+    call_dict = {
+        "id": call.id,
+        "type": "function",
+        "function": {"name": call.name, "arguments": call.arguments},
+    }
+    tool_result = dispatch(call_dict, context, registry=registry)
+    trace.log(
+        "tool_result",
+        {"tool_call_id": call.id, "result": tool_result},
+    )
+    messages.append(
+        ToolMessage(tool_call_id=call.id, content=tool_result),
+    )
+    return replace(context, tool_history=(*context.tool_history, call_dict))

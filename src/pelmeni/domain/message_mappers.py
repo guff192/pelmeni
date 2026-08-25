@@ -86,17 +86,33 @@ def message_from_dto(dto: dict[str, Any]) -> Message:
 def _assistant_from_dto(
     dto: dict[str, Any],
 ) -> AssistantMessage:
-    """Reconstruct an AssistantMessage from a plain dict."""
-    raw_calls: list[dict[str, str]] = dto.get(_TOOL_CALLS) or []
+    """Reconstruct an AssistantMessage from a plain dict.
+
+    Accepts both the normalized internal format (name at top level)
+    and the OpenAI provider format (function-wrapped name/arguments).
+    """
+    raw_calls: list[dict[str, Any]] = dto.get(_TOOL_CALLS) or []
     tool_calls = tuple(
-        ToolCall(
-            id=tc["id"],
-            name=tc["name"],
-            arguments=tc["arguments"],
-        )
+        _tool_call_from_raw(tc)
         for tc in raw_calls
     )
     return AssistantMessage(
         content=dto.get(_CONTENT),
         tool_calls=tool_calls,
+    )
+
+
+def _tool_call_from_raw(tc: dict[str, Any]) -> ToolCall:
+    """Parse one tool call dict in either internal or OpenAI format."""
+    fn: dict[str, Any] | None = tc.get("function")  # noqa: WPS529
+    if fn is not None:
+        return ToolCall(
+            id=tc["id"],
+            name=fn["name"],
+            arguments=fn.get("arguments", "{}"),  # noqa: WPS529
+        )
+    return ToolCall(
+        id=tc["id"],
+        name=tc["name"],
+        arguments=tc["arguments"],
     )
