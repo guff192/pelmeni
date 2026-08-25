@@ -345,8 +345,10 @@ Vertical slice first; each step ends with something runnable:
 4. **Tool registry + 4 agent types** — ✅ done (`src/pelmeni/tools.py`): role whitelists enforced (`investigator`, `builder`, `reviewer`, `tester`)
 5. **Redis bus** — ✅ done (`src/pelmeni/bus/`): two agents talking through Pub/Sub, queues, and shared state
 6. **Context compaction baseline** — ✅ done (`src/pelmeni/context/`): `TokenEstimator`, `TruncateCompactor`, and `loop.py` integration with trace events
-7. **Context compaction hardening (round preservation & output truncation)** — prevent user prompt starvation (preserve user turns) and truncate oversize intermediate tool output (e.g. 26KB file reads)
-8. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
+7. **Pure domain message & round modeling** — zero-dependency dataclass domain models (`SystemMessage`, `UserMessage`, `AssistantMessage`, `ToolMessage`, `Round`) replacing wide `dict[str, Any]` across core loop and context
+8. **Context compaction hardening (round preservation & output truncation)** — round-based pruning over domain `Round` structures to prevent user prompt starvation, plus head/tail bulky tool output truncation
+9. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
+
 ## 📁 Project Layout
 
 ```
@@ -357,6 +359,7 @@ src/pelmeni/
 ├── tools.py                # Tool registry & hook middleware chain
 ├── trace.py                # Session trace logging
 ├── bus/                    # Redis async communication bus (Pub/Sub, queues, state)
+├── domain/                 # Pure Python zero-dependency domain entities (Messages, Rounds)
 ├── context/                # Token estimation and context compaction engine
 ├── dto/                    # Pydantic Data Transfer Objects & hook DTOs
 ├── auth/                   # Credentials management & Chain of Responsibility resolver
@@ -364,6 +367,7 @@ src/pelmeni/
 ├── providers/              # LLM Provider layer, router facade & factory registry
 └── config/                 # Pydantic boundary validation schemas & ConfigService facade
 ```
+
 
 - **Sessions**: `~/.pelmeni/sessions/<project-name>/<session-hash>/trace.jsonl` — every LLM request/response and tool result
 - **Dev model**: local LM Studio server (`localhost:1234`), `qwen/qwen3-8b`; API key is a placeholder constant until step 2
