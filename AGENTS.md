@@ -344,9 +344,9 @@ Vertical slice first; each step ends with something runnable:
 3. **Tool hooks** — ✅ done (`src/pelmeni/hooks/`): middleware chain with blocklist, path guards, confirm-prompt
 4. **Tool registry + 4 agent types** — ✅ done (`src/pelmeni/tools.py`): role whitelists enforced (`investigator`, `builder`, `reviewer`, `tester`)
 5. **Redis bus** — ✅ done (`src/pelmeni/bus/`): two agents talking through Pub/Sub, queues, and shared state
-6. **Context compaction** — summarize old messages when over token budget
-7. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
-
+6. **Context compaction baseline** — ✅ done (`src/pelmeni/context/`): `TokenEstimator`, `TruncateCompactor`, and `loop.py` integration with trace events
+7. **Context compaction hardening (round preservation & output truncation)** — prevent user prompt starvation (preserve user turns) and truncate oversize intermediate tool output (e.g. 26KB file reads)
+8. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
 ## 📁 Project Layout
 
 ```
@@ -356,7 +356,8 @@ src/pelmeni/
 ├── loop.py                 # Core agent loop (~100 lines)
 ├── tools.py                # Tool registry & hook middleware chain
 ├── trace.py                # Session trace logging
-├── bus/                  # Redis async communication bus (Pub/Sub, queues, state)
+├── bus/                    # Redis async communication bus (Pub/Sub, queues, state)
+├── context/                # Token estimation and context compaction engine
 ├── dto/                    # Pydantic Data Transfer Objects & hook DTOs
 ├── auth/                   # Credentials management & Chain of Responsibility resolver
 ├── hooks/                  # Tool call middleware chain & built-in hooks
@@ -456,3 +457,20 @@ The project architecture underwent a comprehensive modular refactoring to elimin
   - `RedisSchema` added to `config/models.py` and `AppConfig` with default connection URL.
 - **End-to-End Multi-Agent Integration**:
   - Added `tests/test_agent_bus_integration.py` proving orchestrator and worker task delegation, result Pub/Sub, and state coordination (79 total tests passing).
+
+### 9. Context Compaction Subsystem (`src/pelmeni/context/`, `src/pelmeni/dto/context.py`)
+- **Build Step 6 Complete**: Implemented modular context compaction engine to prevent token budget exhaustion.
+- **Domain DTOs & Config**:
+  - `CompactionStrategy` enum (`truncate`, `summarize`), `CompactionResult`, and `CompactionConfigSchema` in `src/pelmeni/dto/context.py`.
+  - `CompactionConfigSchema` wired into `AgentModelSchema` and `AppConfigSchema` with per-agent override resolution in `ConfigService`.
+- **Protocols & Engine**:
+  - `TokenEstimator` protocol with `HeuristicEstimator` implementation (deterministic character/JSON calculation).
+  - `ContextCompactor` protocol with `TruncateCompactor` implementation.
+  - Re-exports centralized in `src/pelmeni/context/__init__.py`.
+- **Loop Integration (`src/pelmeni/loop.py`)**:
+  - Compaction runs at the start of each iteration before the LLM request.
+  - In-place mutation of `messages` list (`messages[:] = ...`).
+  - Trace observability logging `context_compacted` events.
+- **Observed Edge Cases & Build Step 7 Target**:
+  - *User prompt preservation*: Naive sequential popping from index 1 removes user prompts, leaving broken `['system', 'assistant', 'tool']` sequences that cause LLM hallucination/errors.
+  - *Oversize tool output truncation*: When a single tool output (e.g. 26KB `cat ./AGENTS.md`) exceeds `target_tokens`, dropping short user messages cannot resolve context pressure. Intermediate tool outputs must support content truncation.
