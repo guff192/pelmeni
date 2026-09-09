@@ -44,7 +44,7 @@ class TruncateCompactor:
         """Initialise with a token estimator."""
         self._estimator = estimator
 
-    def compact(  # noqa: WPS210
+    def compact(
         self,
         messages: list[Message],
         config: CompactionConfigSchema,
