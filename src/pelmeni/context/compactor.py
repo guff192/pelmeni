@@ -8,10 +8,12 @@ representation) and respects the configuration options defined in
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from pelmeni.context.estimator import get_default_estimator
-from pelmeni.domain.rounds import group_into_rounds
+from pelmeni.domain.messages import AssistantMessage, ToolMessage
+from pelmeni.domain.rounds import Round, group_into_rounds
 from pelmeni.dto.context import (
     CompactionConfigSchema,
     CompactionResult,
@@ -21,30 +23,58 @@ from pelmeni.dto.context import (
 if TYPE_CHECKING:
     from pelmeni.context.protocol import ContextCompactor, TokenEstimator
     from pelmeni.domain.messages import Message, SystemMessage
-    from pelmeni.domain.rounds import Round
+
+
+def _build_truncation_marker(elided: int) -> str:
+    return f"\n\n[...truncated {elided} chars...]\n\n"
+
+
+def truncate_tool_output(raw_text: str, max_chars: int) -> str:
+    """Truncate tool output to max_chars with head, marker, and tail."""
+    if len(raw_text) <= max_chars:
+        return raw_text
+    half = max_chars // 2
+    tail_index = half - max_chars
+    marker = _build_truncation_marker(len(raw_text) - max_chars)
+    head = raw_text[:half]
+    tail = raw_text[tail_index:]
+    return f"{head}{marker}{tail}"
+
+
+def _condense_round_tools(rnd: Round, max_chars: int) -> Round:
+    """Condense oversized ToolMessage turns in a single round."""
+    new_turns: list[AssistantMessage | ToolMessage] = []
+    for turn in rnd.turns:
+        if isinstance(turn, ToolMessage) and len(turn.content) > max_chars:
+            new_turns.append(
+                replace(
+                    turn,
+                    content=truncate_tool_output(turn.content, max_chars),
+                )
+            )
+        else:
+            new_turns.append(turn)
+    return Round(user=rnd.user, turns=tuple(new_turns))
 
 
 class TruncateCompactor:
     """Compact message history by truncating oldest entries.
 
-    The algorithm is straightforward:
-
-    1. If ``config.enabled`` is ``False`` the original message list is returned
-       unchanged.
-    2. The total token count is estimated via the supplied ``estimator``.
-    3. If the count exceeds ``config.max_tokens`` the algorithm removes the
-       oldest non-system rounds until the count falls to or below
-       ``config.target_tokens``, while keeping at least
-       ``config.keep_recent_rounds`` rounds.
-    4. The system message at index 0 is never pruned.
-    5. A :class:`CompactionResult` describing the operation is returned.
+    The algorithm operates in two tiers:
+    1. If ``config.enabled`` is ``False`` the original messages are returned.
+    2. If token count exceeds ``config.max_tokens``:
+       a. Historical tool messages in older rounds are condensed.
+       b. If token count still exceeds ``config.target_tokens``, oldest rounds
+          are pruned while keeping at least ``config.keep_recent_rounds``.
+    3. The system message at index 0 is never pruned.
+    4. A :class:`CompactionResult` describing the operation is returned.
     """
 
     def __init__(self, estimator: TokenEstimator) -> None:
         """Initialise with a token estimator."""
         self._estimator = estimator
 
-    def compact(  # noqa: WPS210
+    def compact(
         self,
         messages: list[Message],
         config: CompactionConfigSchema,
@@ -61,38 +91,20 @@ class TruncateCompactor:
         """
         tokens_before = self._estimator.estimate_messages(messages)
 
-        if not config.enabled:
-            return CompactionResult(
-                compacted=False,
-                original_count=len(messages),
-                compacted_count=len(messages),
-                tokens_before=tokens_before,
-                tokens_after=tokens_before,
-                messages=messages,
-                strategy_used=CompactionStrategy.TRUNCATE,
-            )
-
-        if tokens_before <= config.max_tokens:
-            return CompactionResult(
-                compacted=False,
-                original_count=len(messages),
-                compacted_count=len(messages),
-                tokens_before=tokens_before,
-                tokens_after=tokens_before,
-                messages=messages,
-                strategy_used=CompactionStrategy.TRUNCATE,
-            )
+        if not config.enabled or tokens_before <= config.max_tokens:
+            return self._no_op_result(messages, tokens_before)
 
         system, rounds = group_into_rounds(messages)
-        keep = max(config.keep_recent_rounds, 0)
-        running_tokens = tokens_before
-
-        while running_tokens > config.target_tokens and len(rounds) > keep:
-            freed = self._prune_oldest_round(rounds)
-            if freed <= 0:
-                break
-            running_tokens -= freed
-
+        rounds = self._condense_historical_rounds(rounds, config.max_tool_chars)
+        running_tokens = self._estimator.estimate_messages(
+            self._flatten(system, rounds)
+        )
+        running_tokens = self._prune_rounds_to_target(
+            rounds,
+            config.target_tokens,
+            max(config.keep_recent_rounds, 0),
+            running_tokens,
+        )
         truncated = self._flatten(system, rounds)
         return CompactionResult(
             compacted=True,
@@ -104,14 +116,58 @@ class TruncateCompactor:
             strategy_used=CompactionStrategy.TRUNCATE,
         )
 
+    def _no_op_result(
+        self,
+        messages: list[Message],
+        tokens: int,
+    ) -> CompactionResult:
+        """Return a no-op compaction result when compaction is not needed."""
+        return CompactionResult(
+            compacted=False,
+            original_count=len(messages),
+            compacted_count=len(messages),
+            tokens_before=tokens,
+            tokens_after=tokens,
+            messages=messages,
+            strategy_used=CompactionStrategy.TRUNCATE,
+        )
+
+    def _condense_historical_rounds(
+        self,
+        rounds: list[Round],
+        max_tool_chars: int,
+    ) -> list[Round]:
+        """Condense historical tool outputs in older rounds."""
+        if len(rounds) <= 1:
+            return rounds
+        condensed = [
+            _condense_round_tools(rnd, max_tool_chars) for rnd in rounds[:-1]
+        ]
+        return [*condensed, rounds[-1]]
+
+    def _prune_rounds_to_target(
+        self,
+        rounds: list[Round],
+        target_tokens: int,
+        keep_rounds: int,
+        running_tokens: int,
+    ) -> int:
+        """Prune oldest rounds until token count is within target."""
+        tokens = running_tokens
+        while tokens > target_tokens and len(rounds) > keep_rounds:
+            freed = self._prune_oldest_round(rounds)
+            if freed <= 0:
+                break
+            tokens -= freed
+        return tokens
+
     def _prune_oldest_round(self, rounds: list[Round]) -> int:
         """Remove the oldest round and return freed token count."""
         if not rounds:
             return 0
         oldest = rounds.pop(0)
         return sum(
-            self._estimator.estimate_message(msg)
-            for msg in oldest.all_messages
+            self._estimator.estimate_message(msg) for msg in oldest.all_messages
         )
 
     def _flatten(
