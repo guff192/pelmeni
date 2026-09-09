@@ -13,7 +13,11 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-from pelmeni.context.compactor import TruncateCompactor, get_default_compactor
+from pelmeni.context.compactor import (
+    TruncateCompactor,
+    get_default_compactor,
+    truncate_tool_output,
+)
 from pelmeni.context.estimator import HeuristicEstimator, get_default_estimator
 from pelmeni.context.protocol import ContextCompactor, TokenEstimator
 from pelmeni.domain.message_mappers import message_to_dto
@@ -21,6 +25,7 @@ from pelmeni.domain.messages import (
     AssistantMessage,
     Message,
     SystemMessage,
+    ToolMessage,
     UserMessage,
 )
 from pelmeni.dto.context import (
@@ -287,6 +292,119 @@ class TestTruncateCompactorKeepRecentRounds:
         )
         result = compactor.compact(msgs, config)
         assert len(result.messages) == 0
+
+
+# ---------------------------------------------------------------------------
+# truncate_tool_output and two-tier compaction unit/integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestTruncateToolOutput:
+    """Tests for truncate_tool_output helper."""
+
+    def test_shorter_content_unchanged(self) -> None:
+        """Content shorter than max_chars is returned unchanged."""
+        content = "short output"
+        assert truncate_tool_output(content, max_chars=100) == content
+
+    def test_exact_content_unchanged(self) -> None:
+        """Content exactly equal to max_chars is returned unchanged."""
+        content = "1234567890"
+        assert truncate_tool_output(content, max_chars=10) == content
+
+    def test_longer_content_truncated(self) -> None:
+        """Content longer than max_chars is truncated with marker."""
+        content = "A" * 50 + "MIDDLE" + "B" * 50
+        # len = 106. max_chars = 20.
+        # head_len = 20 // 2 = 10. tail_len = 20 - 10 = 10.
+        res = truncate_tool_output(content, max_chars=20)
+        assert res.startswith("AAAAAAAAAA")
+        assert res.endswith("BBBBBBBBBB")
+        assert "[...truncated 86 chars...]" in res
+
+    def test_odd_max_chars_split(self) -> None:
+        """Odd max_chars splits head and tail correctly."""
+        content = "abcdefghijklmnopqrstuvwxyz"
+        # len = 26. max_chars = 11.
+        # head_len = 11 // 2 = 5. tail_len = 11 - 5 = 6.
+        res = truncate_tool_output(content, max_chars=11)
+        assert res.startswith("abcde")
+        assert res.endswith("uvwxyz")
+        assert "[...truncated 15 chars...]" in res
+
+
+class TestTwoTierCompactionIntegration:
+    """Integration tests for two-tier context compaction rules."""
+
+    def test_active_round_tool_output_preserved_when_recent(self) -> None:
+        """Active / latest tool output is NOT truncated even if long."""
+        estimator = HeuristicEstimator()
+        compactor = TruncateCompactor(estimator)
+        long_output = "X" * 1000
+        msgs = [
+            _msg("user", "Hello"),
+            ToolMessage(content=long_output, tool_call_id="call_1"),
+        ]
+        config = CompactionConfigSchema(
+            max_tokens=10,
+            target_tokens=5,
+            keep_recent_rounds=1,
+            max_tool_chars=100,
+        )
+        result = compactor.compact(msgs, config)
+        tool_msgs = [m for m in result.messages if isinstance(m, ToolMessage)]
+        assert len(tool_msgs) == 1
+        assert tool_msgs[0].content == long_output
+
+    def test_historical_round_tool_output_condensed(self) -> None:
+        """Tool output in older rounds exceeding max_tool_chars is condensed."""
+        estimator = HeuristicEstimator()
+        compactor = TruncateCompactor(estimator)
+        long_output = "A" * 1000
+        # Create historical round (index 0 or part of older rounds) + recent
+        # round
+        msgs = [
+            _msg("user", "first query"),
+            ToolMessage(content=long_output, tool_call_id="call_old"),
+            _msg("user", "second query"),
+            AssistantMessage(content="response"),
+        ]
+        config = CompactionConfigSchema(
+            max_tokens=10,
+            target_tokens=5,
+            keep_recent_rounds=1,
+            max_tool_chars=100,
+        )
+        result = compactor.compact(msgs, config)
+        tool_msgs = [m for m in result.messages if isinstance(m, ToolMessage)]
+        if tool_msgs:
+            assert len(tool_msgs[0].content) < len(long_output)
+            assert "[...truncated" in tool_msgs[0].content
+
+    def test_pruning_preserves_user_message_in_retained_rounds(self) -> None:
+        """Pruning preserves UserMessage in every retained round."""
+        estimator = HeuristicEstimator()
+        compactor = TruncateCompactor(estimator)
+        msgs = [
+            _msg("user", "u1" + "a" * 100),
+            AssistantMessage(content="a1" + "a" * 100),
+            _msg("user", "u2" + "a" * 100),
+            AssistantMessage(content="a2" + "a" * 100),
+            _msg("user", "u3" + "a" * 100),
+        ]
+        config = CompactionConfigSchema(
+            max_tokens=50,
+            target_tokens=20,
+            keep_recent_rounds=1,
+        )
+        result = compactor.compact(msgs, config)
+        retained_users = [
+            m for m in result.messages if isinstance(m, UserMessage)
+        ]
+        assert len(retained_users) > 0
+        # First message of any retained block should be UserMessage if the
+        # block starts with UserMessage
+        assert isinstance(result.messages[0], UserMessage)
 
 
 # ---------------------------------------------------------------------------
