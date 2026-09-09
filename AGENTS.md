@@ -346,7 +346,7 @@ Vertical slice first; each step ends with something runnable:
 5. **Redis bus** — ✅ done (`src/pelmeni/bus/`): two agents talking through Pub/Sub, queues, and shared state
 6. **Context compaction baseline** — ✅ done (`src/pelmeni/context/`): `TokenEstimator`, `TruncateCompactor`, and `loop.py` integration with trace events
 7. **Pure domain message & round modeling** — ✅ done (`src/pelmeni/domain/`, `src/pelmeni/cli/`): zero-dependency dataclass domain models (`SystemMessage`, `UserMessage`, `AssistantMessage`, `ToolMessage`, `Round`), modular CLI package, and full core cutover
-8. **Context compaction hardening (round preservation & output truncation)** — round-based pruning over domain `Round` structures to prevent user prompt starvation, plus head/tail bulky tool output truncation
+8. **Context compaction hardening (round preservation & output truncation)** — ✅ done (`src/pelmeni/context/compactor.py`): two-tier tool output lifecycle with head/tail elision, round-based pruning over domain `Round` structures preventing user prompt starvation, and decomposed zero-WPS-violation architecture
 9. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
 
 ## 📁 Project Layout
@@ -493,3 +493,18 @@ The project architecture underwent a comprehensive modular refactoring to elimin
   - Restructured `src/pelmeni/cli/` (`main.py`, `repl.py`, `auth.py`) eliminating `# flake8: noqa: WPS201`.
   - Loop imports streamlined via package facades, eliminating WPS201 across the core loop.
   - 100% test coverage green (165 total tests passing).
+
+### 11. Context Compaction Hardening (`src/pelmeni/context/compactor.py`)
+- **Build Step 8 Complete**: Hardened context compaction against intra-round token explosions and user prompt starvation.
+- **Two-Tier Tool Output Lifecycle**:
+  - *Active Turn Fidelity*: Active/latest tool output remains 100% visible to the LLM for immediate reasoning.
+  - *Historical Turn Condensation*: Oversized `ToolMessage` turns in older historical rounds (`rounds[:-1]`) exceeding `max_tool_chars` (default 2000) are truncated via `truncate_tool_output()`.
+- **Head/Tail Truncation Algorithm**:
+  - Splits `max_chars` evenly into head and tail with an informative marker: `\n\n[...truncated N chars...]\n\n`.
+  - Operates cleanly on frozen domain `ToolMessage` instances via `dataclasses.replace`.
+- **Round Preservation Invariant**:
+  - Pruning operates strictly over `Round` structures, guaranteeing every retained round preserves its initiating `UserMessage`.
+  - System prompt at index 0 is unconditionally preserved.
+- **Clean Architecture & Zero Linter Waivers**:
+  - Decomposed `TruncateCompactor.compact()` into single-responsibility helpers (`_no_op_result`, `_condense_historical_rounds`, `_prune_rounds_to_target`).
+  - Removed `# noqa: WPS210`, maintaining 100% compliance across all 4 verification gates (173 tests passing).
