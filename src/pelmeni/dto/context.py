@@ -8,6 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from pelmeni.domain.messages import Message  # noqa: TC001
 
+DEFAULT_MAX_TOOL_CHARS: int = 2000
+MIN_MAX_TOOL_CHARS: int = 100
+
 
 class CompactionStrategy(StrEnum):
     """Enum of available compaction strategies."""
@@ -38,3 +41,6 @@ class CompactionConfigSchema(BaseModel):
     target_tokens: int = 4000
     keep_recent_rounds: int = 3
     strategy: CompactionStrategy = CompactionStrategy.TRUNCATE
+    max_tool_chars: int = Field(
+        default=DEFAULT_MAX_TOOL_CHARS, ge=MIN_MAX_TOOL_CHARS
+    )
