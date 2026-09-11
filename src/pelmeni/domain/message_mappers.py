@@ -53,8 +53,11 @@ def _assistant_to_dto(
         dto[_TOOL_CALLS] = [
             {
                 "id": tc.id,
-                "name": tc.name,
-                "arguments": tc.arguments,
+                "type": "function",
+                "function": {
+                    "name": tc.name,
+                    "arguments": tc.arguments,
+                },
             }
             for tc in message.tool_calls
         ]

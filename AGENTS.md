@@ -508,3 +508,8 @@ The project architecture underwent a comprehensive modular refactoring to elimin
 - **Clean Architecture & Zero Linter Waivers**:
   - Decomposed `TruncateCompactor.compact()` into single-responsibility helpers (`_no_op_result`, `_condense_historical_rounds`, `_prune_rounds_to_target`).
   - Removed `# noqa: WPS210`, maintaining 100% compliance across all 4 verification gates (173 tests passing).
+
+### 12. OpenAI API Serialization Compliance (`src/pelmeni/domain/message_mappers.py`)
+- **Bug Fix**: Fixed a serialization bug in `_assistant_to_dto` where domain `ToolCall` objects were flattened incorrectly.
+- **Strict Schema Adherence**: Serialized `AssistantMessage` DTOs now strictly adhere to the OpenAI function calling schema (including the `"type": "function"` field and the nested `"function"` object).
+- **Provider Stability**: Prevents `400 Bad Request` validation errors from strict providers during subsequent loop iterations that serialize previous tool calls.
