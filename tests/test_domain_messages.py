@@ -354,7 +354,9 @@ class TestMessageToDto:
         calls = dto["tool_calls"]
         assert len(calls) == 1
         assert calls[0]["id"] == "c1"
-        assert calls[0]["name"] == "fn"
+        assert calls[0]["type"] == "function"
+        assert calls[0]["function"]["name"] == "fn"
+        assert calls[0]["function"]["arguments"] == "{}"
 
     def test_tool_message_to_dto(self) -> None:
         """ToolMessage converts to a dict with role, id, and content."""
