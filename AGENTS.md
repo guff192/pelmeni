@@ -347,7 +347,57 @@ Vertical slice first; each step ends with something runnable:
 6. **Context compaction baseline** — ✅ done (`src/pelmeni/context/`): `TokenEstimator`, `TruncateCompactor`, and `loop.py` integration with trace events
 7. **Pure domain message & round modeling** — ✅ done (`src/pelmeni/domain/`, `src/pelmeni/cli/`): zero-dependency dataclass domain models (`SystemMessage`, `UserMessage`, `AssistantMessage`, `ToolMessage`, `Round`), modular CLI package, and full core cutover
 8. **Context compaction hardening (round preservation & output truncation)** — ✅ done (`src/pelmeni/context/compactor.py`): two-tier tool output lifecycle with head/tail elision, round-based pruning over domain `Round` structures preventing user prompt starvation, and decomposed zero-WPS-violation architecture
-9. **Everything else** (Kafka, K8s, control-plane API) — only if a real need appears
+9. **Core native tools implementation** — ⏳ planned (`src/pelmeni/tools/`):
+   - Implement pure Python stdlib execution handlers for whitelisted tools (`handler=None` replacement):
+     - `read(path, start_line=None, end_line=None)`: Line-numbered output (`1: ...`), UTF-8 safe, large-file elision.
+     - `write(path, content)`: Atomic file creation and overwrite.
+     - `edit(path, old_text, new_text)`: Strict search-and-replace; validates that `old_text` matches exactly once in `path`, failing fast on 0 or multiple matches.
+     - `glob(pattern, path=".")`: Fast pattern-matching file discovery.
+     - `grep(pattern, path=".", case_sensitive=True)`: File and line-anchored regex/literal search (`path:line:content`).
+   - Default exclusions for `.git`, `.venv`, `node_modules`, and `__pycache__`.
+   - Security guard: Enforce user confirmation hook approval when accessing any path matched by `.gitignore`.
+10. **Antigravity subscription bridge & CLI provider** — ⏳ planned (`src/pelmeni/providers/antigravity/`):
+    - **Subprocess Bridge Architecture**: Uses local official Google binary (`agy`) to bypass Google's third-party harness blocks (prompt substring matching & `requestType: "agent"` filters) and avoid account bans.
+    - **Execution Modes & Headless Flags**:
+      - `--mode accept-edits`: Bypasses `agy`'s internal `plan.md` artifact generation, allowing direct code generation and action execution.
+      - `--dangerously-skip-permissions`: Essential for non-interactive / headless subprocess runs to prevent blocking on interactive CLI permission prompts.
+      - `--output-format stream-json`: Real-time NDJSON event streaming (`step_update` text deltas) yielding tokens directly to the REPL.
+    - **Context Caching & Continuity**:
+      - Explicit `--conversation <session_uuid>` propagation maps Pelmeni sessions to Antigravity conversation threads.
+      - Leverages Google's TPU implicit prefix caching ($>150\text{k}$ cached KV tokens), significantly reducing latency and compute overhead.
+    - **Tool Interoperability Paths**:
+      - *Path A (MCP Bridge)*: Expose Pelmeni's role-scoped `ToolRegistry` and hook middleware chain as a local stdio MCP server registered via `.agents/mcp_config.json` or `agy mcp`, enabling `agy` to run on Google AI subscription quotas while executing Pelmeni's gated tools.
+      - *Path B (Direct Completion Proxy)*: Format turns to receive pure code/text completions without triggering `agy`'s default tools.
+    - **Model Catalog**: Exposes subscription models (`antigravity:gemini-3.8-flash-high`, `antigravity:gemini-3.1-pro-high`, `antigravity:claude-sonnet-4-6`).
+11. **Interactive REPL overhaul** — ⏳ planned (`src/pelmeni/cli/repl.py`, `src/pelmeni/ui/`):
+    - Replace standard `input()` with `prompt_toolkit` for Readline/Emacs keybindings (`Ctrl+A`, `Ctrl+E`, `Ctrl+R` history search).
+    - `Shift+Enter` for multiline input; plain `Enter` for submitting queries.
+    - Global command history persisted across sessions in `~/.pelmeni/history`.
+    - Auto-completing slash-command palette (`/task`, `/role`, `/model`, `/compact`, `/clear`, `/trace`, `/help`, `/exit`).
+    - `rich` live token streaming and styled panels for tool invocations/results.
+    - Session resumption via `pelmeni --continue` and `pelmeni --resume <id>`.
+12. **Agent profiles & system prompt management** — ⏳ planned (`src/pelmeni/domain/agents.py`):
+    - Pure domain `AgentProfile` dataclasses (`role`, `name`, `system_prompt`, `allowed_tools`).
+    - Specialized baseline prompts per role:
+      - `investigator`: Strictly read-only code localization returning structured file:line tables.
+      - `builder`: Surgical code edits via `edit` accompanied by concise change explanations.
+      - `reviewer`: Code quality and convention audits tagging issues explicitly as `[MECHANICAL]` or `[NON-MECHANICAL]`.
+      - `tester`: Targeted test generation and execution for builder changes.
+    - Optional template overrides from `~/.config/pelmeni/agents/<role>.md` assigned in `config.toml`.
+13. **Bus abstraction & in-memory fallback** — ⏳ planned (`src/pelmeni/bus/`):
+    - Common `BusProtocol` interface for pub/sub, queues, and state.
+    - `InMemoryBus` implementation (`asyncio.Queue` + `dict`) allowing local multi-agent workflows without Docker/Redis running.
+    - Unified factory returning `RedisBus` when reachable, falling back cleanly to `InMemoryBus`.
+14. **Multi-agent orchestrator pipeline & Task CLI** — ⏳ planned (`src/pelmeni/orchestrator/`, `src/pelmeni/cli/`):
+    - In-process async coordinator executing the 5-phase Standard Edit Loop:
+      1. `investigator` gathers context $\rightarrow$ produces structured findings.
+      2. `builder` applies surgical edits (with optional `--confirm` pre-edit gate).
+      3. `tester` generates and runs targeted regression tests.
+      4. `reviewer` audits diff and test output $\rightarrow$ tags `[MECHANICAL]` vs `[NON-MECHANICAL]`.
+      5. Second `builder` pass fixes `[MECHANICAL]` issues $\rightarrow$ final orchestrator summary to user.
+    - Context isolation via structured Markdown summary artifacts passed between stages.
+    - Headless execution: `pelmeni task "<prompt>" [--confirm] [--role <role>]` and REPL command `/task <prompt>`.
+15. **Everything else** (Kafka, K8s, remote control-plane API) — only if a real need appears
 
 ## 📁 Project Layout
 
