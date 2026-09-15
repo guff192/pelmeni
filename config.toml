@@ -1,5 +1,0 @@
-[models]
-local = "openai-compatible:qwen3@http://localhost:1234/v1"
-
-[agents]
-default = { model = "local" }
