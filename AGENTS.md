@@ -347,15 +347,15 @@ Vertical slice first; each step ends with something runnable:
 6. **Context compaction baseline** — ✅ done (`src/pelmeni/context/`): `TokenEstimator`, `TruncateCompactor`, and `loop.py` integration with trace events
 7. **Pure domain message & round modeling** — ✅ done (`src/pelmeni/domain/`, `src/pelmeni/cli/`): zero-dependency dataclass domain models (`SystemMessage`, `UserMessage`, `AssistantMessage`, `ToolMessage`, `Round`), modular CLI package, and full core cutover
 8. **Context compaction hardening (round preservation & output truncation)** — ✅ done (`src/pelmeni/context/compactor.py`): two-tier tool output lifecycle with head/tail elision, round-based pruning over domain `Round` structures preventing user prompt starvation, and decomposed zero-WPS-violation architecture
-9. **Core native tools implementation** — ⏳ planned (`src/pelmeni/tools/`):
-   - Implement pure Python stdlib execution handlers for whitelisted tools (`handler=None` replacement):
-     - `read(path, start_line=None, end_line=None)`: Line-numbered output (`1: ...`), UTF-8 safe, large-file elision.
-     - `write(path, content)`: Atomic file creation and overwrite.
+9. **Core native tools implementation** — ✅ done (`src/pelmeni/tools/`):
+   - Implemented pure Python stdlib execution handlers replacing `handler=None`:
+     - `read(path, start_line=None, end_line=None)`: Line-numbered output (`1: ...`), UTF-8 safe with binary detection, large-file elision.
+     - `write(path, payload)`: Atomic file creation and overwrite with directory creation.
      - `edit(path, old_text, new_text)`: Strict search-and-replace; validates that `old_text` matches exactly once in `path`, failing fast on 0 or multiple matches.
      - `glob(pattern, path=".")`: Fast pattern-matching file discovery.
      - `grep(pattern, path=".", case_sensitive=True)`: File and line-anchored regex/literal search (`path:line:content`).
    - Default exclusions for `.git`, `.venv`, `node_modules`, and `__pycache__`.
-   - Security guard: Enforce user confirmation hook approval when accessing any path matched by `.gitignore`.
+   - Security guard: `GitignoreGuardHook` enforcing user confirmation hook approval when accessing any path matched by `.gitignore`.
 10. **Antigravity subscription bridge & CLI provider** — ⏳ planned (`src/pelmeni/providers/antigravity/`):
     - **Subprocess Bridge Architecture**: Uses local official Google binary (`agy`) to bypass Google's third-party harness blocks (prompt substring matching & `requestType: "agent"` filters) and avoid account bans.
     - **Execution Modes & Headless Flags**:
@@ -573,3 +573,20 @@ The project architecture underwent a comprehensive modular refactoring to elimin
   - `message_mappers.py` round-trips `thought_signature` across domain messages.
   - `GoogleAssistantTranslator._convert_tool_call()` re-attaches `thoughtSignature` when formatting prior assistant turns back to Gemini.
   - 100% compliant with strict verification gates: Pytest -> Mypy -> Ruff -> Flake8 (176 tests passing).
+
+### 14. Core Native Tools & Security Guard Implementation (Build Step 9)
+- **Build Step 9 Complete**: Implemented pure Python stdlib execution handlers for core tools, decomposing monolithic `tools.py` into modular package `src/pelmeni/tools/`.
+- **Package Decomposition & Architecture (`src/pelmeni/tools/`)**:
+  - `file_ops.py`: `read_path`, `write_file`, `edit_file` with atomic temporary writes and strict search-and-replace validation.
+  - `search.py`: `glob_paths` and `grep_search` with in-place excluded directory pruning and file/line anchoring.
+  - `security.py`: Gitignore file discovery, pattern matching, and default directory exclusions (`.git`, `.venv`, `node_modules`, `__pycache__`).
+  - `registry.py`: `ToolRegistry`, static specs (`BASH_TOOL`), and `DEFAULT_REGISTRY` with native execution handlers attached.
+  - `dispatch.py`: Hook execution, argument parsing, error handling, and `dispatch_and_append()`.
+  - `bash.py`: `execute_bash` handler with timeout and character limits.
+  - `__init__.py`: Clean facade re-exporting all public tool functions and registry instances.
+- **Security Guard Hook (`src/pelmeni/hooks/builtins.py`)**:
+  - `GitignoreGuardHook`: Traverses ancestor directories for `.gitignore`, matches target path arguments, and requires interactive confirmation approval before access is permitted.
+  - Registered as built-in hook in `src/pelmeni/hooks/loader.py`.
+- **Quality & Verification Gates**:
+  - Added comprehensive test suite in `tests/test_native_tools.py` (20 new tests, 196 total passing).
+  - 100% compliant with strict verification gates: Pytest -> Mypy -> Ruff -> Flake8 (0 WPS violations across entire project).
