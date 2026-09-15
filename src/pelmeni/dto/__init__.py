@@ -32,5 +32,6 @@ from pelmeni.dto.tools import (  # noqa: F401
     AgentRole,
     Tool,
     ToolFunction,
+    ToolSpec,
 )
 from pelmeni.dto.trace import TraceEvent  # noqa: F401

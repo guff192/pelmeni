@@ -10,6 +10,7 @@ from pelmeni.config.models import HookConfigSchema
 from pelmeni.hooks.builtins import (
     BlocklistHook,
     ConfirmPromptHook,
+    GitignoreGuardHook,
     PathGuardHook,
 )
 from pelmeni.hooks.chain import HookChain, HookError
@@ -23,10 +24,6 @@ if TYPE_CHECKING:
 _DEFAULT_CHAIN = ("blocklist", "path_guard", "confirm_prompt")
 
 
-def _make_blocklist(_config: dict) -> Hook:
-    return BlocklistHook()
-
-
 def _make_path_guard(config: dict) -> Hook:
     return PathGuardHook(
         allow=config.get("allow", ["./**"]),
@@ -34,18 +31,13 @@ def _make_path_guard(config: dict) -> Hook:
     )
 
 
-def _make_confirm_prompt(config: dict) -> Hook:
-    return ConfirmPromptHook(mode=config.get("default", "ask"))
-
-
 def _validate_spec(name: str, config: dict) -> ModuleSpec:
     module_name = config.get("module")
     if not isinstance(module_name, str) or not module_name:
         message = f"custom hook '{name}' requires a module"
         raise HookError(message)
-    module_path = (
-        Path.home() / ".config" / "pelmeni" / "hooks" / f"{module_name}.py"
-    )
+    config_dir = Path.home() / ".config" / "pelmeni" / "hooks"
+    module_path = config_dir / f"{module_name}.py"
     spec = importlib_util.spec_from_file_location(
         f"pelmeni_user_hook_{name}",
         module_path,
@@ -75,11 +67,13 @@ def _load_user_hook(name: str, config: dict) -> Hook:
 
 def _make_hook(name: str, hook_config: dict) -> Hook:
     if name == "blocklist":
-        return _make_blocklist(hook_config)
+        return BlocklistHook()
     if name == "path_guard":
         return _make_path_guard(hook_config)
     if name == "confirm_prompt":
-        return _make_confirm_prompt(hook_config)
+        return ConfirmPromptHook(mode=hook_config.get("default", "ask"))
+    if name == "gitignore_guard":
+        return GitignoreGuardHook(root_dir=hook_config.get("root_dir"))
     return _load_user_hook(name, hook_config)
 
 

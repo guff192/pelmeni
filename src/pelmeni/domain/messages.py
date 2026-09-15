@@ -17,6 +17,7 @@ class ToolCall:
     id: str
     name: str
     arguments: str
+    thought_signature: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

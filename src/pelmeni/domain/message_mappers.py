@@ -41,6 +41,20 @@ def message_to_dto(message: Message) -> dict[str, Any]:
     raise TypeError(msg)  # noqa: WPS220
 
 
+def _serialize_tool_call(tc: ToolCall) -> dict[str, Any]:
+    call_dict: dict[str, Any] = {
+        "id": tc.id,
+        "type": "function",
+        "function": {
+            "name": tc.name,
+            "arguments": tc.arguments,
+        },
+    }
+    if tc.thought_signature is not None:
+        call_dict["thought_signature"] = tc.thought_signature
+    return call_dict
+
+
 def _assistant_to_dto(
     message: AssistantMessage,
 ) -> dict[str, Any]:
@@ -50,17 +64,8 @@ def _assistant_to_dto(
         _CONTENT: message.content,
     }
     if message.tool_calls:
-        dto[_TOOL_CALLS] = [
-            {
-                "id": tc.id,
-                "type": "function",
-                "function": {
-                    "name": tc.name,
-                    "arguments": tc.arguments,
-                },
-            }
-            for tc in message.tool_calls
-        ]
+        calls = message.tool_calls
+        dto[_TOOL_CALLS] = [_serialize_tool_call(call) for call in calls]
     return dto
 
 
@@ -95,10 +100,7 @@ def _assistant_from_dto(
     and the OpenAI provider format (function-wrapped name/arguments).
     """
     raw_calls: list[dict[str, Any]] = dto.get(_TOOL_CALLS) or []
-    tool_calls = tuple(
-        _tool_call_from_raw(tc)
-        for tc in raw_calls
-    )
+    tool_calls = tuple(_tool_call_from_raw(tc) for tc in raw_calls)
     return AssistantMessage(
         content=dto.get(_CONTENT),
         tool_calls=tool_calls,
@@ -107,15 +109,18 @@ def _assistant_from_dto(
 
 def _tool_call_from_raw(tc: dict[str, Any]) -> ToolCall:
     """Parse one tool call dict in either internal or OpenAI format."""
+    sig = tc.get("thought_signature") or tc.get("thoughtSignature")
     fn: dict[str, Any] | None = tc.get("function")  # noqa: WPS529
     if fn is not None:
         return ToolCall(
             id=tc["id"],
             name=fn["name"],
             arguments=fn.get("arguments", "{}"),  # noqa: WPS529
+            thought_signature=sig,
         )
     return ToolCall(
         id=tc["id"],
         name=tc["name"],
         arguments=tc["arguments"],
+        thought_signature=sig,
     )

@@ -8,6 +8,7 @@ from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Literal
 
 from pelmeni.dto.hooks import HookResult
+from pelmeni.tools.security import is_gitignored
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -32,9 +33,8 @@ class BlocklistHook:
     name = "blocklist"
 
     def __init__(self) -> None:
-        self._patterns = tuple(
-            re.compile(pattern) for pattern in _BLOCKLIST_PATTERNS
-        )
+        compiled = [re.compile(pattern) for pattern in _BLOCKLIST_PATTERNS]
+        self._patterns = tuple(compiled)
 
     def __call__(
         self,
@@ -133,6 +133,46 @@ class ConfirmPromptHook:
         )
 
 
+class GitignoreGuardHook:
+    """Enforce user confirmation when accessing gitignored paths."""
+
+    name = "gitignore_guard"
+
+    def __init__(
+        self,
+        root_dir: str | None = None,
+        confirm_fn: Callable[[str], bool] | None = None,
+    ) -> None:
+        self._root_dir = root_dir
+        self._confirm_fn = confirm_fn or _stdin_confirm
+
+    def __call__(
+        self,
+        tool_call: dict,
+        context: HookContext,  # noqa: ARG002
+    ) -> HookResult:
+        """Deny or require confirmation for gitignored path arguments."""
+        tool_name = tool_call.get("function", {}).get("name", "tool")
+        for path in _extract_paths(_parse_arguments(tool_call)):
+            verdict = self._check_path(path, tool_name)
+            if verdict is not None:
+                return verdict
+        return HookResult(verdict=_ALLOW)
+
+    def _check_path(self, path: str, tool_name: str) -> HookResult | None:
+        if not is_gitignored(path, root_dir=self._root_dir):
+            return None
+        req_desc = f"Tool '{tool_name}' requests access to gitignored"
+        summary = f"{req_desc} path '{path}'"
+        reason_msg = f"Access to gitignored path '{path}' was rejected"
+        if not self._confirm_fn(summary):
+            return HookResult(
+                verdict=_DENY,
+                reason=reason_msg,
+            )
+        return None
+
+
 def _parse_arguments(tool_call: dict) -> dict:
     raw_arguments = tool_call.get("function", {}).get("arguments", "")
     if not isinstance(raw_arguments, str):
@@ -156,6 +196,8 @@ def _stdin_confirm(summary: str) -> bool:
     print(summary)
     try:
         answer = input("Allow? [y/N] ")
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
+        return False
+    except KeyboardInterrupt:
         return False
     return answer.lower() in {"y", "yes"}
