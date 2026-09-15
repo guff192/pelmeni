@@ -11,6 +11,7 @@ class ToolCall(BaseModel):
     id: str
     type: Literal["function"] = "function"
     function: dict[str, str]  # name, arguments (raw string)
+    thought_signature: str | None = None
 
 
 class SystemMessage(BaseModel):

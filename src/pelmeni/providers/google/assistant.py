@@ -24,7 +24,8 @@ class GoogleAssistantTranslator:
     """Translator for Gemini assistant messages and tool call arguments."""
 
     def build_call_id_map(
-        self, messages: list[dict[str, Any]]
+        self,
+        messages: list[dict[str, Any]],
     ) -> dict[str, str]:
         """Build mapping from call_id to function name."""
         call_id_to_name: dict[str, str] = {}
@@ -39,16 +40,14 @@ class GoogleAssistantTranslator:
         if isinstance(fn_args, str):
             try:
                 parsed = json.loads(fn_args)
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 return {}
             return parsed if isinstance(parsed, dict) else {}
         if isinstance(fn_args, dict):
             return fn_args
         return {}
 
-    def convert_assistant_message(
-        self, msg: dict[str, Any]
-    ) -> dict[str, Any]:
+    def convert_assistant_message(self, msg: dict[str, Any]) -> dict[str, Any]:
         """Convert assistant message to Gemini model format."""
         parts: list[dict[str, Any]] = []
         if msg.get(_KEY_CONTENT):
@@ -92,16 +91,22 @@ class GoogleAssistantTranslator:
                     call_id_to_name[tc_id] = name
 
     def _convert_tool_call(
-        self, tc: dict[object, object]
+        self,
+        tc: dict[object, object],
     ) -> dict[str, Any] | None:
         """Convert one tool call to a Gemini function call part."""
-        fn_info = tc.get(_KEY_FUNCTION)
-        fn_info_dict = fn_info if isinstance(fn_info, dict) else {}
-        fn_name = fn_info_dict.get(_KEY_NAME)
-        fn_args = fn_info_dict.get(_KEY_ARGUMENTS, "{}")
-        return {
+        raw_fn = tc.get(_KEY_FUNCTION)
+        fn_info = raw_fn if isinstance(raw_fn, dict) else {}
+        fn_name = fn_info.get(_KEY_NAME)
+        part: dict[str, Any] = {
             _KEY_FUNCTION_CALL: {
                 _KEY_NAME: fn_name if isinstance(fn_name, str) else "",
-                _KEY_ARGS: self.parse_fn_args(fn_args),
-            }
+                _KEY_ARGS: self.parse_fn_args(
+                    fn_info.get(_KEY_ARGUMENTS, "{}"),
+                ),
+            },
         }
+        sig = tc.get("thought_signature") or tc.get("thoughtSignature")
+        if isinstance(sig, str) and sig:
+            part["thoughtSignature"] = sig
+        return part

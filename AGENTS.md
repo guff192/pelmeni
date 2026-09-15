@@ -563,3 +563,13 @@ The project architecture underwent a comprehensive modular refactoring to elimin
 - **Bug Fix**: Fixed a serialization bug in `_assistant_to_dto` where domain `ToolCall` objects were flattened incorrectly.
 - **Strict Schema Adherence**: Serialized `AssistantMessage` DTOs now strictly adhere to the OpenAI function calling schema (including the `"type": "function"` field and the nested `"function"` object).
 - **Provider Stability**: Prevents `400 Bad Request` validation errors from strict providers during subsequent loop iterations that serialize previous tool calls.
+
+### 13. Gemini Thought Signature Preservation (`src/pelmeni/providers/google/`)
+- **Bug Fix**: Preserved Google Gemini's reasoning metadata (`thoughtSignature`) across multi-turn tool calling loops.
+- **Root Cause**: Gemini 2.5/3.x models (`gemini-3.5-flash-lite`) attach Base64 `thoughtSignature` metadata to candidate `functionCall` parts. When Pelmeni re-serialized previous assistant turns without this signature on turn 2, Gemini returned HTTP 400 `INVALID_ARGUMENT: Function call is missing a thought_signature in functionCall parts`.
+- **Domain & Provider Propagation**:
+  - Added optional `thought_signature: str | None = None` to domain and DTO `ToolCall` entities.
+  - `GoogleCallParser` extracts `thoughtSignature` from model response parts.
+  - `message_mappers.py` round-trips `thought_signature` across domain messages.
+  - `GoogleAssistantTranslator._convert_tool_call()` re-attaches `thoughtSignature` when formatting prior assistant turns back to Gemini.
+  - 100% compliant with strict verification gates: Pytest -> Mypy -> Ruff -> Flake8 (176 tests passing).
