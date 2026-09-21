@@ -7,6 +7,8 @@ import argparse
 import sys
 
 from pelmeni.config.parser import ConfigError
+from pelmeni.dto.tools import AgentRole
+from pelmeni.mcp import run_mcp_stdio
 from pelmeni.providers import router as provider
 
 from .auth import handle_auth
@@ -32,6 +34,21 @@ def parse_args(args: list[str]) -> argparse.Namespace:
     login_parser.add_argument("--api-key", help="API key")
     login_parser.add_argument("--client-id", help="OAuth client ID")
 
+    mcp_parser = subparsers.add_parser(
+        "tools-mcp",
+        help="Run role-scoped tools MCP stdio server",
+    )
+    mcp_parser.add_argument(
+        "--role",
+        required=True,
+        choices=[role.value for role in AgentRole],
+        help="Agent role defining permitted tools",
+    )
+    mcp_parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Session identifier for hook context",
+    )
     return parser.parse_args(args)
 
 
@@ -43,6 +60,9 @@ def main() -> None:
         handle_auth(parsed)
         return
 
+    if parsed.subcommand == "tools-mcp":
+        run_mcp_stdio(role=parsed.role, session_id=parsed.session_id)
+        return
     try:
         messages, trace, context = setup_session()
     except (ConfigError, provider.ProviderError) as exc:
