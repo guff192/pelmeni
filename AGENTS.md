@@ -356,27 +356,27 @@ Vertical slice first; each step ends with something runnable:
      - `grep(pattern, path=".", case_sensitive=True)`: File and line-anchored regex/literal search (`path:line:content`).
    - Default exclusions for `.git`, `.venv`, `node_modules`, and `__pycache__`.
    - Security guard: `GitignoreGuardHook` enforcing user confirmation hook approval when accessing any path matched by `.gitignore`.
-10. **Antigravity subscription bridge & CLI provider** — ⏳ planned (`src/pelmeni/providers/antigravity/`):
-    - **Subprocess Bridge Architecture**: Uses local official Google binary (`agy`) to bypass Google's third-party harness blocks (prompt substring matching & `requestType: "agent"` filters) and avoid account bans.
-    - **Execution Modes & Headless Flags**:
-      - `--mode accept-edits`: Bypasses `agy`'s internal `plan.md` artifact generation, allowing direct code generation and action execution.
-      - `--dangerously-skip-permissions`: Essential for non-interactive / headless subprocess runs to prevent blocking on interactive CLI permission prompts.
-      - `--output-format stream-json`: Real-time NDJSON event streaming (`step_update` text deltas) yielding tokens directly to the REPL.
-    - **Context Caching & Continuity**:
-      - Explicit `--conversation <session_uuid>` propagation maps Pelmeni sessions to Antigravity conversation threads.
-      - Leverages Google's TPU implicit prefix caching ($>150\text{k}$ cached KV tokens), significantly reducing latency and compute overhead.
-    - **Tool Interoperability Paths**:
-      - *Path A (MCP Bridge)*: Expose Pelmeni's role-scoped `ToolRegistry` and hook middleware chain as a local stdio MCP server registered via `.agents/mcp_config.json` or `agy mcp`, enabling `agy` to run on Google AI subscription quotas while executing Pelmeni's gated tools.
-      - *Path B (Direct Completion Proxy)*: Format turns to receive pure code/text completions without triggering `agy`'s default tools.
-    - **Model Catalog**: Exposes subscription models (`antigravity:gemini-3.8-flash-high`, `antigravity:gemini-3.1-pro-high`, `antigravity:claude-sonnet-4-6`).
-11. **Interactive REPL overhaul** — ⏳ planned (`src/pelmeni/cli/repl.py`, `src/pelmeni/ui/`):
+10. **Antigravity subscription bridge & persistent stream provider** — ⏳ in progress (`src/pelmeni/providers/antigravity/`):
+    - Subprocess persistent bridge via local official Google binary (`agy`) with `--mode accept-edits`, `--dangerously-skip-permissions`, `--input-format stream-json`, and `--output-format stream-json`.
+    - `AntigravitySession` managing persistent `subprocess.Popen` over bidirectional NDJSON streaming, eliminating 4.5s per-turn cold startup and dropping warm turn latency to ~1.7s.
+    - Automatic `conversation_id` capture on Turn 1 `init` event and context persistence across turns without restarting the process.
+    - Event stream parser (`events.py`) decoding `init`, `step_update`, and `result` NDJSON events into OpenAI-shaped chat choices.
+    - Integrated with `ProviderFactory`, `ProviderRouter`, and `NoAuthHandler` (anonymous credential resolution using local Google auth).
+    - Model catalog alias support (`antigravity:gemini-3.8-flash-high`, `antigravity:gemini-3.8-flash-low`, `antigravity:gemini-3.1-pro-high`).
+    - **Research & Spec**: Spec tracked in issue #14; persistent stream bridge implemented in issue #15; startup latency research in issue #13; Codex research in issue #12.
+11. **OMP-style session hierarchy & bridge conversation mapping** — ⏳ planned (`src/pelmeni/trace.py`, `src/pelmeni/cli/`, `src/pelmeni/providers/antigravity/`):
+    - **Directory Hierarchy**: `~/.pelmeni/sessions/<project>/<timestamp>_<slug>_<hash>/` containing `main.jsonl` at the root and dedicated `subagents/` folder.
+    - **Subagent Trace Isolation**: Per-invocation logs at `subagents/<role>_<timestamp>_<short_id>.jsonl` created via `trace.create_subagent(role)` factory method.
+    - **Line-1 Header Record**: Fast `head -n 1` lookup storing `{"type": "session_header", "agent_role": "...", "bridge": {"provider": "antigravity", "conversation_id": "<uuid>"}}` flushed after first turn response.
+    - **Conversation Mapping & Cache Continuity**: Captures real `agy` UUID from `init` event and propagates it to consecutive turns via `--conversation <uuid>` for TPU prefix cache hits; auto-recovers with fresh conversation if database was purged.
+12. **Interactive REPL overhaul** — ⏳ planned (`src/pelmeni/cli/repl.py`, `src/pelmeni/ui/`):
     - Replace standard `input()` with `prompt_toolkit` for Readline/Emacs keybindings (`Ctrl+A`, `Ctrl+E`, `Ctrl+R` history search).
     - `Shift+Enter` for multiline input; plain `Enter` for submitting queries.
     - Global command history persisted across sessions in `~/.pelmeni/history`.
     - Auto-completing slash-command palette (`/task`, `/role`, `/model`, `/compact`, `/clear`, `/trace`, `/help`, `/exit`).
     - `rich` live token streaming and styled panels for tool invocations/results.
     - Session resumption via `pelmeni --continue` and `pelmeni --resume <id>`.
-12. **Agent profiles & system prompt management** — ⏳ planned (`src/pelmeni/domain/agents.py`):
+13. **Agent profiles & system prompt management** — ⏳ planned (`src/pelmeni/domain/agents.py`):
     - Pure domain `AgentProfile` dataclasses (`role`, `name`, `system_prompt`, `allowed_tools`).
     - Specialized baseline prompts per role:
       - `investigator`: Strictly read-only code localization returning structured file:line tables.
@@ -384,11 +384,11 @@ Vertical slice first; each step ends with something runnable:
       - `reviewer`: Code quality and convention audits tagging issues explicitly as `[MECHANICAL]` or `[NON-MECHANICAL]`.
       - `tester`: Targeted test generation and execution for builder changes.
     - Optional template overrides from `~/.config/pelmeni/agents/<role>.md` assigned in `config.toml`.
-13. **Bus abstraction & in-memory fallback** — ⏳ planned (`src/pelmeni/bus/`):
+14. **Bus abstraction & in-memory fallback** — ⏳ planned (`src/pelmeni/bus/`):
     - Common `BusProtocol` interface for pub/sub, queues, and state.
     - `InMemoryBus` implementation (`asyncio.Queue` + `dict`) allowing local multi-agent workflows without Docker/Redis running.
     - Unified factory returning `RedisBus` when reachable, falling back cleanly to `InMemoryBus`.
-14. **Multi-agent orchestrator pipeline & Task CLI** — ⏳ planned (`src/pelmeni/orchestrator/`, `src/pelmeni/cli/`):
+15. **Multi-agent orchestrator pipeline & Task CLI** — ⏳ planned (`src/pelmeni/orchestrator/`, `src/pelmeni/cli/`):
     - In-process async coordinator executing the 5-phase Standard Edit Loop:
       1. `investigator` gathers context $\rightarrow$ produces structured findings.
       2. `builder` applies surgical edits (with optional `--confirm` pre-edit gate).
@@ -397,7 +397,7 @@ Vertical slice first; each step ends with something runnable:
       5. Second `builder` pass fixes `[MECHANICAL]` issues $\rightarrow$ final orchestrator summary to user.
     - Context isolation via structured Markdown summary artifacts passed between stages.
     - Headless execution: `pelmeni task "<prompt>" [--confirm] [--role <role>]` and REPL command `/task <prompt>`.
-15. **Everything else** (Kafka, K8s, remote control-plane API) — only if a real need appears
+16. **Everything else** (Kafka, K8s, remote control-plane API) — only if a real need appears
 
 ## 📁 Project Layout
 
@@ -590,3 +590,31 @@ The project architecture underwent a comprehensive modular refactoring to elimin
 - **Quality & Verification Gates**:
   - Added comprehensive test suite in `tests/test_native_tools.py` (20 new tests, 196 total passing).
   - 100% compliant with strict verification gates: Pytest -> Mypy -> Ruff -> Flake8 (0 WPS violations across entire project).
+
+### 15. Antigravity persistent stream bridge (Build Step 10 / Issue #15)
+- **Build Step 10 Stream Bridge Complete**: Transitioned `AntigravityProvider` from ephemeral `subprocess.run` invocations to a long-lived persistent `subprocess.Popen` bridge (`AntigravitySession`) over two-way NDJSON streaming (`--input-format stream-json` and `--output-format stream-json`), eliminating the 4.5s startup delay on warm turns and preserving conversation context.
+- **Package Architecture (`src/pelmeni/providers/antigravity/`)**:
+  - `process.py`: `AntigravitySession` managing persistent `subprocess.Popen[str]` with line-buffered stdin and stdout pipes, `send_prompt()` writing `{"event": "user", "message": {"content": prompt}}\n`, reading until `result` event, and clean termination via `close()`.
+  - `events.py`: `extract_init_conversation_id()` extracting `conversation_id` from `init` events, `extract_result_response()` validating `status == "SUCCESS"` and extracting response text.
+  - `provider.py`: `AntigravityProvider` managing `AntigravitySession` lifecycle, context manager support (`__enter__`, `__exit__`), and tracking `_conversation_id` across turns.
+  - `__init__.py`: Clean facade exporting `AntigravityProvider` and `AntigravitySession`.
+- **Quality & Verification Gates**:
+  - Comprehensive unit and contract test suite in `tests/test_antigravity_provider.py` covering persistent streaming, conversation ID capture, process reuse across consecutive turns, termination on close, and error propagation.
+  - 100% compliant with strict verification gates: Pytest -> Mypy -> Ruff -> Flake8 (215 total passing tests, 0 WPS violations).
+
+### 16. Role-Scoped Tools-MCP Stdio Server (Build Step 10 / Issue #16)
+- **Build Step 10 Feature Complete**: Implemented role-scoped Model Context Protocol (MCP) server over JSON-RPC stdio (`src/pelmeni/mcp/`), enabling external CLI bridges (such as Google Antigravity `agy`) to invoke Pelmeni native tools with strict role permissions and security hook middleware gating.
+- **Package Architecture (`src/pelmeni/mcp/`)**:
+  - `server.py`: Zero-SDK JSON-RPC 2.0 stdio server (`McpServer`) handling `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`.
+  - `run_mcp_stdio`: CLI runtime entry point reading NDJSON stream lines over `sys.stdin` and writing structured JSON responses to `sys.stdout`.
+  - `__init__.py`: Clean facade export for `McpServer` and `run_mcp_stdio`.
+- **Role-Scoped Tool Gating & Security Chain**:
+  - `tools/list` reflects role whitelists from `DEFAULT_REGISTRY.get_tools_for_role(role)` (e.g. `investigator` is granted `read`, `grep`, `glob`, `lsp`; `builder` is granted `edit`, `write`, `bash`).
+  - `tools/call` executes through `pelmeni.tools.dispatch.dispatch()` with injected `HookContext(agent_role=role, session_id=session_id)`.
+  - All security hooks (`BlocklistHook`, `PathGuardHook`, `ConfirmPromptHook`, `GitignoreGuardHook`) govern external MCP tool calls; hook denials and role permission errors return structured MCP `{ "isError": true, "content": [{"type": "text", "text": "..."}] }` responses.
+- **CLI Subcommand Integration (`src/pelmeni/cli/main.py`)**:
+  - Registered `pelmeni tools-mcp --role <role> [--session-id <id>]`.
+- **Quality & Verification Gates**:
+  - Unit and contract test suite in `tests/test_mcp_server.py` covering initialize handshakes, tool filtering, tool execution, hook denial formatting, invalid params, and CLI arguments (11 tests, 215 total passing).
+  - Verified end-to-end via live HTTP `curl` bridge.
+  - 100% compliant with strict verification gates: Pytest -> Mypy -> Ruff -> Flake8 (0 WPS violations).

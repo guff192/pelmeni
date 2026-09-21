@@ -109,7 +109,7 @@ class NoAuthHandler(AbstractCredentialHandler):
         """Initialize with providers that permit anonymous access."""
         super().__init__()
         default_providers = frozenset(
-            ("ollama", "lmstudio", "openai-compatible"),
+            ("ollama", "lmstudio", "openai-compatible", "antigravity"),
         )
         self._providers = providers or default_providers
 
