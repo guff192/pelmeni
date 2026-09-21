@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 from typing import TYPE_CHECKING, TextIO
@@ -224,13 +225,14 @@ class McpServer:
                 "arguments": json.dumps(validated[1]),
             },
         }
-        out_str = dispatch(
-            call_dict,
-            context=HookContext(
-                agent_role=self.role, session_id=self.session_id
-            ),
-            registry=self.registry,
-        )
+        with contextlib.redirect_stdout(sys.stderr):
+            out_str = dispatch(
+                call_dict,
+                context=HookContext(
+                    agent_role=self.role, session_id=self.session_id
+                ),
+                registry=self.registry,
+            )
         return _format_result(
             req_id,
             {
