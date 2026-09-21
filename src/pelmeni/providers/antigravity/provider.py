@@ -1,18 +1,26 @@
-"""Antigravity CLI provider for OpenAI-shaped chat requests."""
+"""Antigravity CLI provider for OpenAI chat with persistent sessions."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
-from pelmeni.providers.antigravity import events, process
+from pelmeni.providers.antigravity import process
 from pelmeni.providers.base import Provider, ProviderCredentials, ProviderError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from types import TracebackType
 
 
 class AntigravityProvider(Provider):
-    """Run chat requests through the locally authenticated agy CLI."""
+    """Run chat requests through the locally authenticated agy CLI session."""
+
+    def __init__(
+        self, session: process.AntigravitySession | None = None
+    ) -> None:
+        """Initialize Antigravity provider with persistent session."""
+        self._session = session
+        self._conversation_id: str | None = None
 
     def chat(
         self,
@@ -39,6 +47,48 @@ class AntigravityProvider(Provider):
 
         """
         self._validate_parameters(tools, model, credentials)
+        if conversation_id is not None:
+            self._conversation_id = conversation_id
+
+        prompt = self._extract_prompt(messages)
+
+        if self._session is None or not self._session.is_running():
+            self._session = process.AntigravitySession(
+                model=model,
+                conversation_id=self._conversation_id,
+            )
+
+        response_text = self._session.send_prompt(prompt)
+        if self._session.conversation_id:
+            self._conversation_id = self._session.conversation_id
+
+        return {
+            "choices": [
+                {"message": {"role": "assistant", "content": response_text}},
+            ],
+        }
+
+    def close(self) -> None:
+        """Close the underlying session if active."""
+        if self._session is not None:
+            self._session.close()
+            self._session = None
+
+    def __enter__(self) -> Self:
+        """Enter provider context manager."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Exit provider context manager."""
+        self.close()
+
+    def _extract_prompt(self, messages: list[dict]) -> str:
+        """Extract prompt text from messages history."""
         prompt_parts = []
         for message in messages:
             message_text = message.get("content")
@@ -47,12 +97,7 @@ class AntigravityProvider(Provider):
                 str,
             ):
                 prompt_parts.append(message_text)
-        prompt = "\n".join(prompt_parts)
-        stdout = process.run_antigravity(
-            prompt,
-            conversation_id=conversation_id,
-        )
-        return events.parse_antigravity_output(stdout)
+        return "\n".join(prompt_parts)
 
     def _validate_parameters(
         self,

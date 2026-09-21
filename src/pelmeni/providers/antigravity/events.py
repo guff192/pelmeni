@@ -1,5 +1,7 @@
 """Translate Antigravity JSON event streams into chat completion responses."""
 
+from __future__ import annotations
+
 import json
 
 from pelmeni.providers.base import ProviderError
@@ -20,7 +22,7 @@ def parse_antigravity_output(raw_output: str) -> dict:
     """
     result_text: str | None = None
     for line in raw_output.splitlines():
-        extracted = _extract_event_result(line)
+        extracted = extract_result_response(line)
         if extracted is not None:
             result_text = extracted
     if result_text is None:
@@ -33,16 +35,50 @@ def parse_antigravity_output(raw_output: str) -> dict:
     }
 
 
-def _extract_event_result(raw_line: str) -> str | None:
-    """Extract result text from a raw event line when present."""
+def extract_init_conversation_id(raw_line: str) -> str | None:
+    """Extract conversation ID from an init event line when present.
+
+    Args:
+        raw_line: One line from the command's standard output.
+
+    Returns:
+        The conversation ID string, or None if not an init event or absent.
+
+    """
+    event = _parse_line(raw_line)
+    if event is None or event.get("event") != "init":
+        return None
+    conv_id = event.get("conversation_id")
+    if isinstance(conv_id, str):
+        return conv_id
+    init_payload = event.get("init")
+    if isinstance(init_payload, dict):
+        nested_id = init_payload.get("conversation_id")
+        if isinstance(nested_id, str):
+            return nested_id
+    return None
+
+
+def extract_result_response(raw_line: str) -> str | None:
+    """Extract result response from a raw event line when present.
+
+    Args:
+        raw_line: One line from the command's standard output.
+
+    Returns:
+        Response string if result event, or None if not a result event.
+
+    Raises:
+        ProviderError: The result status is not successful (e.g. ERROR).
+
+    """
     event = _parse_line(raw_line)
     if event is None or event.get("event") != "result":
         return None
     event_result = event.get("result")
     if not isinstance(event_result, dict):
         return None
-    extracted = _extract_result_text(event_result)
-    return extracted or None
+    return _extract_result_text(event_result)
 
 
 def _parse_line(raw_line: str) -> dict | None:
