@@ -38,6 +38,24 @@ def test_parse_model_spec_openai_compatible_with_url() -> None:
     assert resolved.base_url == "http://localhost:1234/v1"
 
 
+def test_parse_model_spec_antigravity_default() -> None:
+    """Test parsing antigravity model spec defaulting to gemini-3.8-flash-low."""
+    resolved = ConfigService().parse_model_spec(
+        "antigravity", "antigravity:gemini-3.8-flash-low"
+    )
+    assert resolved.alias == "antigravity"
+    assert resolved.provider == "antigravity"
+    assert resolved.model == "gemini-3.8-flash-low"
+
+
+def test_parse_model_spec_antigravity_bare_defaults_to_low() -> None:
+    """Test parsing bare antigravity: spec defaults to gemini-3.8-flash-low."""
+    resolved = ConfigService().parse_model_spec("antigravity", "antigravity:")
+    assert resolved.alias == "antigravity"
+    assert resolved.provider == "antigravity"
+    assert resolved.model == "gemini-3.8-flash-low"
+
+
 def test_parse_model_spec_openai_compatible_missing_url() -> None:
     """Test parsing openai-compatible spec without URL raises error."""
     with pytest.raises(ConfigError, match="requires @url"):

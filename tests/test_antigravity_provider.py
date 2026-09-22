@@ -32,12 +32,18 @@ class MockPopen:
         self.stderr.read.return_value = ""
         self._running = True
         self.stdout.readline.side_effect = [
-            '{"event":"init","conversation_id":"conv-123"}\n',
+            (
+                '{"event":"init","conversation_id":"conv-123",'
+                '"init":{"tools":["read_file","run_command","call_mcp_tool"]}}\n'
+            ),
             (
                 '{"event":"result","result":{"status":"SUCCESS",'
                 '"response":"Hello world"}}\n'
             ),
-            '{"event":"init","conversation_id":"conv-123"}\n',
+            (
+                '{"event":"init","conversation_id":"conv-123",'
+                '"init":{"tools":["read_file","run_command","call_mcp_tool"]}}\n'
+            ),
             (
                 '{"event":"result","result":{"status":"SUCCESS",'
                 '"response":"Hello world"}}\n'
@@ -58,10 +64,28 @@ class MockPopen:
         self._running = False
 
     def wait(self, timeout: float | None = None) -> int:
-        """Wait for process exit."""
-        _ = timeout
+        """Wait for process completion."""
         self._running = False
         return 0
+
+
+def test_factory_creates_antigravity_provider_and_fetches_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test creating Antigravity provider fetches and populates tools."""
+    mock_popen = MagicMock(side_effect=MockPopen)
+    monkeypatch.setattr("subprocess.Popen", mock_popen)
+    monkeypatch.setattr("shutil.which", MagicMock(return_value="agy"))
+
+    AntigravityProvider.tools = []
+    provider = ProviderFactory().create("antigravity")
+
+    assert isinstance(provider, AntigravityProvider)
+    assert AntigravityProvider.tools == [
+        "read_file",
+        "run_command",
+        "call_mcp_tool",
+    ]
 
 
 def test_factory_creates_antigravity_provider() -> None:
@@ -241,3 +265,187 @@ def test_antigravity_provider_error_result_status(
             model="antigravity",
             credentials=NoCredentials(provider="antigravity"),
         )
+
+
+def test_antigravity_session_creates_isolated_mcp_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test AntigravitySession generates isolated HOME with role-scoped MCP."""
+    import json
+    from pathlib import Path
+
+    mock_popen = MagicMock(side_effect=MockPopen)
+    monkeypatch.setattr("subprocess.Popen", mock_popen)
+    monkeypatch.setattr("shutil.which", MagicMock(return_value="agy"))
+
+    session = AntigravitySession(
+        role="investigator", session_id="test-sess-123"
+    )
+    session.start()
+
+    try:
+        mock_popen.assert_called_once()
+        call_kwargs = mock_popen.call_args.kwargs
+        env = call_kwargs.get("env")
+        assert env is not None
+        assert "HOME" in env
+        temp_home = Path(env["HOME"])
+        assert temp_home.is_dir()
+
+        mcp_cfg_path = temp_home / ".gemini" / "config" / "mcp_config.json"
+        assert mcp_cfg_path.is_file()
+
+        data = json.loads(mcp_cfg_path.read_text(encoding="utf-8"))
+        pelmeni_server = data.get("mcpServers", {}).get("pelmeni")
+        assert pelmeni_server is not None
+        assert "--role" in pelmeni_server["args"]
+        assert "investigator" in pelmeni_server["args"]
+        assert "--session-id" in pelmeni_server["args"]
+        assert "test-sess-123" in pelmeni_server["args"]
+    finally:
+        session.close()
+        assert not temp_home.exists()
+
+
+def test_antigravity_provider_role_and_tool_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test AntigravityProvider passes role and appends tool instructions."""
+    created_popens: list[MockPopen] = []
+
+    def mock_factory(*args: object, **kwargs: object) -> MockPopen:
+        proc = MockPopen(*args, **kwargs)  # type: ignore[arg-type]
+        created_popens.append(proc)
+        return proc
+
+    monkeypatch.setattr("subprocess.Popen", mock_factory)
+    monkeypatch.setattr("shutil.which", MagicMock(return_value="agy"))
+    provider = AntigravityProvider(role="investigator", session_id="test-sess")
+    res = provider.chat(
+        messages=[{"role": "user", "content": "Search for files"}],
+        tools=[{"type": "function", "function": {"name": "read"}}],
+        model="antigravity:gemini-3.8-flash-low",
+        credentials=NoCredentials(provider="antigravity"),
+    )
+    assert res["choices"][0]["message"]["content"] == "Hello world"
+    assert provider.session is not None
+    assert provider.session.role == "investigator"
+    assert provider.session.session_id == "test-sess"
+
+    # Verify prompt sent to agy includes the tool usage instruction
+    assert len(created_popens) == 1
+    send_calls = [
+        call[0][0] for call in created_popens[0].stdin.write.call_args_list
+    ]
+    assert any("pelmeni" in call for call in send_calls)
+    provider.close()
+
+
+class MockMultiTurnMcpPopen:
+    """Mock Popen simulating a multi-turn conversation where agy uses MCP tool."""
+
+    def __init__(self, args: list[str], **kwargs: object) -> None:
+        """Initialize mock process and setup stdout events."""
+        self.args = args
+        self.env = kwargs.get("env", {})
+        self.stdin = MagicMock()
+        self.stdout = MagicMock()
+        self.stderr = MagicMock()
+        self.stderr.read.return_value = ""
+        self._running = True
+        self.stdout.readline.side_effect = [
+            # Turn 1
+            '{"event":"init","conversation_id":"conv-e2e-456"}\n',
+            (
+                '{"event":"step_update","step_update":{"conversation_id":"conv-e2e-456",'
+                '"step_index":1,"state":"DONE","step_type":"agent_response"}}\n'
+            ),
+            (
+                '{"event":"result","result":{"status":"SUCCESS",'
+                '"response":"File content read: [project] name = pelmeni"}}\n'
+            ),
+            # Turn 2
+            (
+                '{"event":"step_update","step_update":{"conversation_id":"conv-e2e-456",'
+                '"step_index":2,"state":"DONE","step_type":"agent_response"}}\n'
+            ),
+            (
+                '{"event":"result","result":{"status":"SUCCESS",'
+                '"response":"Turn 2 success"}}\n'
+            ),
+            "",
+        ]
+
+    def poll(self) -> int | None:
+        """Return process exit code."""
+        return None if self._running else 0
+
+    def terminate(self) -> None:
+        """Terminate process."""
+        self._running = False
+
+    def kill(self) -> None:
+        """Kill process."""
+        self._running = False
+
+    def wait(self, timeout: float | None = None) -> int:
+        """Wait for process completion."""
+        self._running = False
+        return 0
+
+
+def test_antigravity_provider_e2e_multi_turn_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify multi-turn conversation with MCP tool routing and context persistence."""
+    created_popens: list[MockMultiTurnMcpPopen] = []
+
+    def mock_factory(*args: object, **kwargs: object) -> MockMultiTurnMcpPopen:
+        proc = MockMultiTurnMcpPopen(*args, **kwargs)  # type: ignore[arg-type]
+        created_popens.append(proc)
+        return proc
+
+    monkeypatch.setattr("subprocess.Popen", mock_factory)
+    monkeypatch.setattr("shutil.which", MagicMock(return_value="agy"))
+
+    provider = AntigravityProvider(
+        role="investigator", session_id="session-e2e"
+    )
+
+    # Turn 1: User asks to read file, model answers
+    res1 = provider.chat(
+        messages=[{"role": "user", "content": "Read pyproject.toml"}],
+        tools=[{"type": "function", "function": {"name": "read"}}],
+        model="antigravity:gemini-3.8-flash-low",
+        credentials=NoCredentials(provider="antigravity"),
+    )
+    assert (
+        res1["choices"][0]["message"]["content"]
+        == "File content read: [project] name = pelmeni"
+    )
+    assert provider._conversation_id == "conv-e2e-456"
+
+    # Turn 2: Follow-up question, reusing the same persistent session
+    res2 = provider.chat(
+        messages=[
+            {"role": "user", "content": "Read pyproject.toml"},
+            {
+                "role": "assistant",
+                "content": "File content read: [project] name = pelmeni",
+            },
+            {"role": "user", "content": "What was the package name?"},
+        ],
+        tools=[{"type": "function", "function": {"name": "read"}}],
+        model="antigravity:gemini-3.8-flash-low",
+        credentials=NoCredentials(provider="antigravity"),
+    )
+    assert res2["choices"][0]["message"]["content"] == "Turn 2 success"
+    assert provider._conversation_id == "conv-e2e-456"
+
+    # Process was started once and kept open across turns
+    assert len(created_popens) == 1
+    popen = created_popens[0]
+    assert popen.stdin.write.call_count == 2
+
+    provider.close()
+    assert provider.session is None
