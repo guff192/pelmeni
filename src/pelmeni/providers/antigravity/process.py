@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import sys
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 from pelmeni.providers.antigravity import events
@@ -14,6 +18,64 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 
+def _build_mcp_config(role: str, session_id: str | None) -> dict:
+    """Build role-scoped MCP config dictionary for pelmeni."""
+    args = [
+        "-m",
+        "pelmeni.cli.main",
+        "tools-mcp",
+        "--role",
+        role,
+    ]
+    if session_id:
+        args.extend(["--session-id", session_id])
+    return {
+        "mcpServers": {
+            "pelmeni": {
+                "command": sys.executable,
+                "args": args,
+                "disabled": False,
+            }
+        }
+    }
+
+
+def _safe_symlink(src: Path, dest: Path) -> None:
+    """Create symlink safely ignoring OSError."""
+    try:
+        dest.symlink_to(src)
+    except OSError:
+        return
+
+
+def _link_gemini_assets(gemini_dir: Path) -> None:
+    """Link non-config assets from user gemini directory."""
+    real_gemini = Path.home() / ".gemini"
+    if not real_gemini.exists():
+        return
+    for asset in real_gemini.iterdir():
+        if asset.name != "config":
+            _safe_symlink(asset, gemini_dir / asset.name)
+
+
+def _setup_isolated_gemini_home(
+    temp_dir: str,
+    role: str,
+    session_id: str | None,
+) -> str:
+    """Set up isolated GEMINI home directory with role-scoped MCP config."""
+    gemini_dir = Path(temp_dir) / ".gemini"
+    config_dir = gemini_dir / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    mcp_config = _build_mcp_config(role=role, session_id=session_id)
+    mcp_file = config_dir / "mcp_config.json"
+    mcp_file.write_text(json.dumps(mcp_config, indent=2), encoding="utf-8")
+
+    _link_gemini_assets(gemini_dir)
+    return temp_dir
+
+
 class AntigravitySession:
     """Managed persistent subprocess session for Antigravity CLI."""
 
@@ -21,11 +83,17 @@ class AntigravitySession:
         self,
         model: str | None = None,
         conversation_id: str | None = None,
+        role: str | None = None,
+        session_id: str | None = None,
     ) -> None:
         """Initialize session parameters."""
         self.model = model
         self.conversation_id = conversation_id
+        self.role = role
+        self.session_id = session_id
+        self.tools: list[str] = []
         self._process: subprocess.Popen[str] | None = None
+        self._temp_dir: str | None = None
 
     def start(self) -> None:
         """Start the Antigravity background process."""
@@ -48,6 +116,15 @@ class AntigravitySession:
         if self.conversation_id:
             command.extend(["--conversation", self.conversation_id])
 
+        env = dict(os.environ)
+        if self.role:
+            self._temp_dir = tempfile.mkdtemp(prefix="pelmeni_agy_")
+            env["HOME"] = _setup_isolated_gemini_home(
+                temp_dir=self._temp_dir,
+                role=self.role,
+                session_id=self.session_id,
+            )
+
         try:
             self._process = subprocess.Popen(  # noqa: S603
                 command,
@@ -55,8 +132,12 @@ class AntigravitySession:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                env=env,
             )
         except Exception as exc:
+            if self._temp_dir:
+                shutil.rmtree(self._temp_dir, ignore_errors=True)
+                self._temp_dir = None
             message = f"Failed to start Antigravity process: {exc}"
             raise ProviderError(message) from exc
 
@@ -107,6 +188,9 @@ class AntigravitySession:
             conv_id = events.extract_init_conversation_id(line)
             if conv_id:
                 self.conversation_id = conv_id
+            init_tools = events.extract_init_tools(line)
+            if init_tools is not None:
+                self.tools = init_tools
 
             res = events.extract_result_response(line)
             if res is not None:
@@ -134,7 +218,7 @@ class AntigravitySession:
         raise ProviderError(message)
 
     def close(self) -> None:
-        """Terminate process and close pipes."""
+        """Terminate process, close pipes, and clean up temporary directory."""
         if self._process:
             try:
                 if self._process.stdin:
@@ -151,6 +235,9 @@ class AntigravitySession:
                         self._process.kill()
             finally:
                 self._process = None
+        if self._temp_dir:
+            shutil.rmtree(self._temp_dir, ignore_errors=True)
+            self._temp_dir = None
 
     def __enter__(self) -> Self:
         """Enter context manager."""
