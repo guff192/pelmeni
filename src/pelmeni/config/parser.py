@@ -49,7 +49,9 @@ def parse_model_spec(alias: str, specification: str) -> ModelSpec:
         _raise_config_error(message)
 
     provider, model, parsed_url = _split_model_spec(specification)
-    if not model:
+    if not model and provider == "antigravity":
+        model = "gemini-3.8-flash-low"
+    elif not model:
         message = (
             f"Empty model name in model spec '{specification}' for alias "
             f"'{alias}'"
