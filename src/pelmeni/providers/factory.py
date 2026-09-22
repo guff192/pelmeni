@@ -29,6 +29,7 @@ class ProviderFactory:
         if name == "google":
             return GoogleProvider(base_url=base_url)
         if name == "antigravity":
+            AntigravityProvider.fetch_agy_tools()
             return AntigravityProvider()
         if name in _COMPATIBLE_PROVIDERS:
             return OpenAICompatibleProvider(

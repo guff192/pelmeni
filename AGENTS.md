@@ -356,20 +356,23 @@ Vertical slice first; each step ends with something runnable:
      - `grep(pattern, path=".", case_sensitive=True)`: File and line-anchored regex/literal search (`path:line:content`).
    - Default exclusions for `.git`, `.venv`, `node_modules`, and `__pycache__`.
    - Security guard: `GitignoreGuardHook` enforcing user confirmation hook approval when accessing any path matched by `.gitignore`.
-10. **Antigravity subscription bridge & persistent stream provider** — ⏳ in progress (`src/pelmeni/providers/antigravity/`):
+10. **Antigravity subscription bridge & persistent stream provider** — ✅ done (`src/pelmeni/providers/antigravity/`):
     - Subprocess persistent bridge via local official Google binary (`agy`) with `--mode accept-edits`, `--dangerously-skip-permissions`, `--input-format stream-json`, and `--output-format stream-json`.
     - `AntigravitySession` managing persistent `subprocess.Popen` over bidirectional NDJSON streaming, eliminating 4.5s per-turn cold startup and dropping warm turn latency to ~1.7s.
     - Automatic `conversation_id` capture on Turn 1 `init` event and context persistence across turns without restarting the process.
     - Event stream parser (`events.py`) decoding `init`, `step_update`, and `result` NDJSON events into OpenAI-shaped chat choices.
     - Integrated with `ProviderFactory`, `ProviderRouter`, and `NoAuthHandler` (anonymous credential resolution using local Google auth).
-    - Model catalog alias support (`antigravity:gemini-3.8-flash-high`, `antigravity:gemini-3.8-flash-low`, `antigravity:gemini-3.1-pro-high`).
-    - **Research & Spec**: Spec tracked in issue #14; persistent stream bridge implemented in issue #15; startup latency research in issue #13; Codex research in issue #12.
+    - Role-scoped MCP integration launching `agy` with an isolated configuration workspace routing tool calls to `pelmeni tools-mcp --role <role>`.
+    - Dynamic native tool discovery: `AntigravityProvider.fetch_agy_tools()` extracts `agy`'s internal tool inventory from the `init` event stream on initialization when antigravity is active, storing it in `AntigravityProvider.tools`.
+    - Default model alias resolution configured to low reasoning effort (`gemini-3.8-flash-low`).
+    - **Research & Spec**: Spec tracked in issue #14; persistent stream bridge implemented in issue #15; role-scoped MCP server implemented in issue #16; integration completed in issue #17. Dynamic model discovery spec tracked in issue #19; OS-level sandboxing (bwrap / sandbox-exec) spec tracked in issue #20.
 11. **OMP-style session hierarchy & bridge conversation mapping** — ⏳ planned (`src/pelmeni/trace.py`, `src/pelmeni/cli/`, `src/pelmeni/providers/antigravity/`):
     - **Directory Hierarchy**: `~/.pelmeni/sessions/<project>/<timestamp>_<slug>_<hash>/` containing `main.jsonl` at the root and dedicated `subagents/` folder.
     - **Subagent Trace Isolation**: Per-invocation logs at `subagents/<role>_<timestamp>_<short_id>.jsonl` created via `trace.create_subagent(role)` factory method.
     - **Line-1 Header Record**: Fast `head -n 1` lookup storing `{"type": "session_header", "agent_role": "...", "bridge": {"provider": "antigravity", "conversation_id": "<uuid>"}}` flushed after first turn response.
     - **Conversation Mapping & Cache Continuity**: Captures real `agy` UUID from `init` event and propagates it to consecutive turns via `--conversation <uuid>` for TPU prefix cache hits; auto-recovers with fresh conversation if database was purged.
-12. **Interactive REPL overhaul** — ⏳ planned (`src/pelmeni/cli/repl.py`, `src/pelmeni/ui/`):
+12. **Interactive REPL overhaul & Dynamic Provider Model Discovery** — ⏳ planned (`src/pelmeni/cli/repl.py`, `src/pelmeni/providers/`, `src/pelmeni/ui/`):
+    - **Dynamic Model Discovery (Spec: #19)**: Query available models dynamically from provider capabilities instead of static tables (e.g. executing `agy models` CLI subprocess or querying `/v1/models` in OpenAI-compatible/Ollama APIs); auto-populate interactive `/model` picker.
     - Replace standard `input()` with `prompt_toolkit` for Readline/Emacs keybindings (`Ctrl+A`, `Ctrl+E`, `Ctrl+R` history search).
     - `Shift+Enter` for multiline input; plain `Enter` for submitting queries.
     - Global command history persisted across sessions in `~/.pelmeni/history`.
@@ -618,3 +621,22 @@ The project architecture underwent a comprehensive modular refactoring to elimin
   - Unit and contract test suite in `tests/test_mcp_server.py` covering initialize handshakes, tool filtering, tool execution, hook denial formatting, invalid params, and CLI arguments (11 tests, 215 total passing).
   - Verified end-to-end via live HTTP `curl` bridge.
   - 100% compliant with strict verification gates: Pytest -> Mypy -> Ruff -> Flake8 (0 WPS violations).
+
+### 17. Antigravity Bridge & Role-Scoped MCP Tool Integration (Build Step 10 / Issue #17)
+- **Build Step 10 Complete**: Integrated the persistent Antigravity bridge with `pelmeni tools-mcp` so that `agy` executes tool calls strictly through Pelmeni's role-scoped tools under hook middleware gating, defaulting to `gemini-3.8-flash-low`.
+- **Workspace Isolation & Tool Configuration (`src/pelmeni/providers/antigravity/process.py`)**:
+  - `AntigravitySession` automatically provisions an isolated temporary `HOME` environment (`.gemini/config/mcp_config.json`) registering `pelmeni` as an active stdio MCP server invoking `sys.executable -m pelmeni.cli.main tools-mcp --role <role> [--session-id <id>]`.
+  - Non-config assets and auth credentials in `~/.gemini` are securely symlinked, preserving authentication state while isolating tool definitions.
+  - Temporary workspaces are guaranteed to clean up on process termination via `AntigravitySession.close()`.
+- **Model Default & System Policy (`src/pelmeni/config/parser.py`, `src/pelmeni/providers/antigravity/provider.py`)**:
+  - Bare `antigravity:` alias in TOML defaults model resolution to `gemini-3.8-flash-low` to eliminate reasoning token latency.
+  - `AntigravityProvider` prepends an enforceable `[SYSTEM POLICY]` block routing all file and command operations through `call_mcp_tool` on the `pelmeni` server and listing allowed tools for the active role.
+- **Quality & Verification Gates**:
+  - Contract and end-to-end integration tests in `tests/test_antigravity_provider.py` and `tests/test_config.py` verifying workspace isolation, role propagation, tool routing instructions, and multi-turn context continuity (220 total passing tests).
+  - Prototype scripts (`prototype_agy_speed.py`, `prototype_persistent_stream.py`) cleanly removed.
+  - 100% compliant with strict verification gates: Pytest -> Mypy -> Ruff -> Flake8 (0 WPS violations).
+
+### 18. OS-Level Sandboxing Specification for External CLI Bridges (Build Step 10 Follow-Up / Issue #20)
+- **Security Isolation Research Complete**: Investigated native `agy` permissions handling, finding that `--sandbox` is limited to shell execution and falls back to `"BypassSandbox": true`, while file write tools (`write_to_file`) bypass it directly to host disk.
+- **Specification Published**: Tracked in GitHub Issue #20 (`enhancement`, `ready-for-agent`), defining unprivileged OS-level containerization/sandboxing using `bubblewrap` (`bwrap`) on Linux and `sandbox-exec` on macOS.
+- **Architecture**: Runs `agy` inside a read-only filesystem jail (`--ro-bind / /`), preventing rogue tool execution at the kernel level (EROFS), while keeping stdio pipes connected to Pelmeni's role-scoped MCP server.

@@ -6,6 +6,9 @@ import json
 
 from pelmeni.providers.base import ProviderError
 
+INIT_EVENT = "init"
+RESULT_EVENT = "result"
+
 
 def parse_antigravity_output(raw_output: str) -> dict:
     """Extract the successful result from a line-delimited JSON event stream.
@@ -46,7 +49,7 @@ def extract_init_conversation_id(raw_line: str) -> str | None:
 
     """
     event = _parse_line(raw_line)
-    if event is None or event.get("event") != "init":
+    if event is None or event.get("event") != INIT_EVENT:
         return None
     conv_id = event.get("conversation_id")
     if isinstance(conv_id, str):
@@ -59,21 +62,29 @@ def extract_init_conversation_id(raw_line: str) -> str | None:
     return None
 
 
-def extract_result_response(raw_line: str) -> str | None:
-    """Extract result response from a raw event line when present.
+def _is_str_list(elements: object) -> bool:
+    return isinstance(elements, list) and all(
+        isinstance(element, str) for element in elements
+    )
 
-    Args:
-        raw_line: One line from the command's standard output.
 
-    Returns:
-        Response string if result event, or None if not a result event.
-
-    Raises:
-        ProviderError: The result status is not successful (e.g. ERROR).
-
-    """
+def extract_init_tools(raw_line: str) -> list[str] | None:
+    """Extract tools list from an init event line when present."""
     event = _parse_line(raw_line)
-    if event is None or event.get("event") != "result":
+    if event is None or event.get("event") != INIT_EVENT:
+        return None
+    init_payload = event.get("init")
+    if isinstance(init_payload, dict):
+        tools = init_payload.get("tools")
+        if _is_str_list(tools):
+            return tools
+    return None
+
+
+def extract_result_response(raw_line: str) -> str | None:
+    """Extract result response from a raw event line when present."""
+    event = _parse_line(raw_line)
+    if event is None or event.get("event") != RESULT_EVENT:
         return None
     event_result = event.get("result")
     if not isinstance(event_result, dict):
