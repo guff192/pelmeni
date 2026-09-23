@@ -2,41 +2,25 @@
 
 from __future__ import annotations
 
-import asyncio
+from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
-from redis.asyncio import Redis, from_url  # noqa: WPS347
+from redis import asyncio as aioredis
 
 from pelmeni.dto.bus import BusMessage, TaskPayload
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
-class RedisBus:  # noqa: WPS214, WPS338
+
+# WPS214 method count will be resolved in issue #39
+# by encapsulating formatting helpers into private functions.
+class RedisBus:  # noqa: WPS214
     """Bus interface using Redis Pub/Sub, Lists, and Key-Value state."""
 
     def __init__(self, url: str = "redis://localhost:6379/0") -> None:
-        """Initialize Redis bus with connection URL."""
-        self.url = url
-        self._client: Redis | None = None
-        self._lock: asyncio.Lock | None = None
-
-    def _get_lock(self) -> asyncio.Lock:
-        """Get or create a thread-safe lock for connection management."""
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        return self._lock
-
-    async def connect(self) -> None:
-        """Establish connection to Redis."""
-        async with self._get_lock():
-            if self._client is None:
-                self._client = from_url(self.url)
-
-    async def close(self) -> None:
-        """Close connection to Redis."""
-        async with self._get_lock():
-            if self._client is not None:
-                await self._client.aclose()
-                self._client = None
+        """Initialize Redis bus client from URL."""
+        self._client: aioredis.Redis = aioredis.from_url(url)
 
     def format_state_key(self, agent_id: str, key: str) -> str:
         """Format namespaced Redis key for agent state."""
@@ -60,6 +44,15 @@ class RedisBus:  # noqa: WPS214, WPS338
         )
         return int(pub_result)
 
+    async def subscribe(
+        self,
+        channel: str,  # noqa: ARG002
+    ) -> AsyncIterator[BusMessage]:
+        """Subscribe to Pub/Sub channel (placeholder until issue #39)."""
+        err = "RedisBus subscription will be refactored in issue #39"
+        raise NotImplementedError(err)
+        yield  # noqa: WPS427
+
     async def push_task(self, queue_name: str, task: TaskPayload) -> int:
         """Push TaskPayload onto Redis task queue list."""
         client = await self._ensure_client()
@@ -73,12 +66,11 @@ class RedisBus:  # noqa: WPS214, WPS338
     async def pop_task(
         self,
         queue_name: str,
-        timeout: float = 0,  # noqa: ASYNC109
     ) -> TaskPayload | None:
         """Pop TaskPayload from Redis task queue list."""
         client = await self._ensure_client()
         queue_key = self.format_task_queue_key(queue_name)
-        raw_result = await client.blpop([queue_key], timeout=timeout)
+        raw_result = await client.blpop([queue_key], timeout=0)
         if raw_result is None:
             return None
         _, raw_data = raw_result
@@ -89,23 +81,23 @@ class RedisBus:  # noqa: WPS214, WPS338
         except ValidationError:
             return None
 
-    async def set_state(  # noqa: WPS615
+    async def write_state(
         self,
         agent_id: str,
         key: str,
-        value: str,  # noqa: WPS110
+        state_value: str,
     ) -> None:
-        """Set state string key for agent."""
+        """Write state string key for agent."""
         client = await self._ensure_client()
         state_key = self.format_state_key(agent_id, key)
-        await client.set(state_key, value)
+        await client.set(state_key, state_value)
 
-    async def get_state(  # noqa: WPS615
+    async def read_state(
         self,
         agent_id: str,
         key: str,
     ) -> str | None:
-        """Get state string key for agent."""
+        """Read state string key for agent."""
         client = await self._ensure_client()
         state_key = self.format_state_key(agent_id, key)
         raw_val = await client.get(state_key)
@@ -115,10 +107,5 @@ class RedisBus:  # noqa: WPS214, WPS338
             return raw_val.decode("utf-8")
         return str(raw_val)
 
-    async def _ensure_client(self) -> Redis:
-        if self._client is None:
-            await self.connect()
-        if self._client is None:
-            error_message = "Failed to connect Redis client."
-            raise RuntimeError(error_message)
+    async def _ensure_client(self) -> aioredis.Redis:
         return self._client

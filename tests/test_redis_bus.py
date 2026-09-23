@@ -20,6 +20,7 @@ def test_redis_bus_key_formatting() -> None:
 
 def test_redis_bus_publish_mocked() -> None:
     """Publish serializes message and invokes client.publish."""
+
     async def _run() -> None:
         bus = RedisBus(url="redis://localhost:6379/0")
         mock_client = AsyncMock()
@@ -27,13 +28,12 @@ def test_redis_bus_publish_mocked() -> None:
         bus._client = mock_client  # noqa: SLF001
 
         msg = BusMessage(
-            msg_type=MessageType.TASK,
-            sender="orchestrator",
-            target="builder",
-            payload={"key": "val"},
+            msg_type=MessageType.EVENT,
+            sender="a1",
+            payload={"action": "ping"},
         )
-        result = await bus.publish("events", msg)
-        assert result == 1
+        delivered = await bus.publish("events", msg)
+        assert delivered == 1
         mock_client.publish.assert_called_once()
 
     asyncio.run(_run())
@@ -41,15 +41,16 @@ def test_redis_bus_publish_mocked() -> None:
 
 def test_redis_bus_push_pop_mocked() -> None:
     """Push and pop queue tasks using mocked Redis client."""
+
     async def _run() -> None:
         bus = RedisBus(url="redis://localhost:6379/0")
         mock_client = AsyncMock()
+        mock_client.rpush.return_value = 1
         task = TaskPayload(
             task_id="t1",
             role=AgentRole.BUILDER,
-            input_data={"file": "a.py"},
+            input_data={"file": "foo.py"},
         )
-        mock_client.rpush.return_value = 1
         mock_client.blpop.return_value = (
             b"pelmeni:queue:builder",
             task.model_dump_json().encode("utf-8"),
@@ -58,6 +59,7 @@ def test_redis_bus_push_pop_mocked() -> None:
 
         pushed = await bus.push_task("builder", task)
         assert pushed == 1
+        mock_client.rpush.assert_called_once()
 
         popped = await bus.pop_task("builder")
         assert popped is not None
@@ -69,13 +71,14 @@ def test_redis_bus_push_pop_mocked() -> None:
 
 def test_redis_bus_pop_timeout_returns_none() -> None:
     """Pop task returns None when blpop times out."""
+
     async def _run() -> None:
         bus = RedisBus(url="redis://localhost:6379/0")
         mock_client = AsyncMock()
         mock_client.blpop.return_value = None
         bus._client = mock_client  # noqa: SLF001
 
-        result = await bus.pop_task("builder", timeout=1.0)
+        result = await bus.pop_task("builder")
         assert result is None
 
     asyncio.run(_run())
@@ -83,10 +86,14 @@ def test_redis_bus_pop_timeout_returns_none() -> None:
 
 def test_redis_bus_pop_invalid_json_returns_none() -> None:
     """Pop task returns None when blpop returns invalid JSON."""
+
     async def _run() -> None:
         bus = RedisBus(url="redis://localhost:6379/0")
         mock_client = AsyncMock()
-        mock_client.blpop.return_value = (b"queue", b"invalid json")
+        mock_client.blpop.return_value = (
+            b"pelmeni:queue:builder",
+            b"not valid json",
+        )
         bus._client = mock_client  # noqa: SLF001
 
         result = await bus.pop_task("builder")
@@ -97,19 +104,20 @@ def test_redis_bus_pop_invalid_json_returns_none() -> None:
 
 def test_redis_bus_state_mocked() -> None:
     """Set and get agent state using mocked Redis client."""
+
     async def _run() -> None:
         bus = RedisBus(url="redis://localhost:6379/0")
         mock_client = AsyncMock()
         mock_client.get.return_value = b"idle"
         bus._client = mock_client  # noqa: SLF001
 
-        await bus.set_state("a1", "status", "idle")
+        await bus.write_state("a1", "status", "idle")
         mock_client.set.assert_called_once_with(
             "pelmeni:agent:a1:status",
             "idle",
         )
 
-        val = await bus.get_state("a1", "status")
+        val = await bus.read_state("a1", "status")
         assert val == "idle"
 
     asyncio.run(_run())
