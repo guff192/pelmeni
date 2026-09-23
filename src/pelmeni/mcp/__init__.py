@@ -2,6 +2,5 @@
 
 from __future__ import annotations
 
-from pelmeni.mcp.server import McpServer, run_mcp_stdio
-
-__all__ = ["McpServer", "run_mcp_stdio"]
+from pelmeni.mcp.server import McpServer as McpServer
+from pelmeni.mcp.server import run_mcp_stdio as run_mcp_stdio
