@@ -27,11 +27,17 @@ def test_orchestrator_worker_task_exchange() -> None:
         mock_orchestrator_client = AsyncMock()
         mock_worker_client = AsyncMock()
 
-        with patch.object(
-            orchestrator_bus, "_ensure_client",
-            return_value=mock_orchestrator_client,
-        ), patch.object(
-            worker_bus, "_ensure_client", return_value=mock_worker_client,
+        with (
+            patch.object(
+                orchestrator_bus,
+                "_ensure_client",
+                return_value=mock_orchestrator_client,
+            ),
+            patch.object(
+                worker_bus,
+                "_ensure_client",
+                return_value=mock_worker_client,
+            ),
         ):
             # Test constants
             orchestrator_id = "orchestrator_001"
@@ -41,10 +47,10 @@ def test_orchestrator_worker_task_exchange() -> None:
             task_id = "test_task_123"
 
             # 1. Orchestrator sets initial state
-            await orchestrator_bus.set_state(
+            await orchestrator_bus.write_state(
                 orchestrator_id, "status", AgentStatus.IDLE
             )
-            await orchestrator_bus.set_state(
+            await orchestrator_bus.write_state(
                 worker_id, "status", AgentStatus.IDLE
             )
             # Verify state was set
@@ -75,16 +81,12 @@ def test_orchestrator_worker_task_exchange() -> None:
                 orchestrator_bus.format_task_queue_key(task_queue),
                 task_payload.model_dump_json(),
             )
-            received_task = await worker_bus.pop_task(
-                task_queue, timeout=1.0
-            )
+            received_task = await worker_bus.pop_task(task_queue)
             assert received_task is not None
             assert received_task.task_id == task_id
             assert received_task.role == AgentRole.BUILDER
             # 4. Worker updates its status to BUSY
-            await worker_bus.set_state(
-                worker_id, "status", AgentStatus.BUSY
-            )
+            await worker_bus.write_state(worker_id, "status", AgentStatus.BUSY)
             mock_worker_client.set.assert_called_with(
                 f"pelmeni:agent:{worker_id}:status", AgentStatus.BUSY
             )
@@ -123,15 +125,13 @@ def test_orchestrator_worker_task_exchange() -> None:
             # For test, we verify the result was published correctly
 
             # 8. Worker updates status back to IDLE
-            await worker_bus.set_state(
-                worker_id, "status", AgentStatus.IDLE
-            )
+            await worker_bus.write_state(worker_id, "status", AgentStatus.IDLE)
             mock_worker_client.set.assert_called_with(
                 f"pelmeni:agent:{worker_id}:status", AgentStatus.IDLE
             )
 
             # 9. Orchestrator updates task status in shared state
-            await orchestrator_bus.set_state(
+            await orchestrator_bus.write_state(
                 task_id, "status", TaskStatus.COMPLETED
             )
             mock_orchestrator_client.set.assert_called_with(
@@ -152,8 +152,8 @@ def test_shared_state_coordination() -> None:
             agent_id = "test_agent"
 
             # Set initial state
-            await bus.set_state(agent_id, "status", AgentStatus.IDLE)
-            await bus.set_state(agent_id, "current_task", "none")
+            await bus.write_state(agent_id, "status", AgentStatus.IDLE)
+            await bus.write_state(agent_id, "current_task", "none")
 
             # Verify initial state was set
             mock_client.set.assert_any_call(
@@ -164,8 +164,8 @@ def test_shared_state_coordination() -> None:
             )
 
             # Update state as agent becomes busy
-            await bus.set_state(agent_id, "status", AgentStatus.BUSY)
-            await bus.set_state(agent_id, "current_task", "task_123")
+            await bus.write_state(agent_id, "status", AgentStatus.BUSY)
+            await bus.write_state(agent_id, "current_task", "task_123")
 
             # Verify updated state was set
             mock_client.set.assert_any_call(
@@ -188,8 +188,10 @@ def test_pubsub_event_communication() -> None:
         mock_client1 = AsyncMock()
         mock_client2 = AsyncMock()
 
-        with patch.object(bus1, "_ensure_client", return_value=mock_client1), \
-             patch.object(bus2, "_ensure_client", return_value=mock_client2):
+        with (
+            patch.object(bus1, "_ensure_client", return_value=mock_client1),
+            patch.object(bus2, "_ensure_client", return_value=mock_client2),
+        ):
             channel = "test_events"
             # Mock 2 subscribers receiving the event
             expected_subscriber_count = 2
@@ -234,11 +236,17 @@ def test_full_integration_scenario() -> None:
         mock_orchestrator_client = AsyncMock()
         mock_worker_client = AsyncMock()
 
-        with patch.object(
-            orchestrator_bus, "_ensure_client",
-            return_value=mock_orchestrator_client,
-        ), patch.object(
-            worker_bus, "_ensure_client", return_value=mock_worker_client,
+        with (
+            patch.object(
+                orchestrator_bus,
+                "_ensure_client",
+                return_value=mock_orchestrator_client,
+            ),
+            patch.object(
+                worker_bus,
+                "_ensure_client",
+                return_value=mock_worker_client,
+            ),
         ):
             # Test constants
             orchestrator_id = "orchestrator_001"
@@ -267,16 +275,12 @@ def test_full_integration_scenario() -> None:
                 worker_bus.format_task_queue_key(task_queue),
                 task_payload.model_dump_json(),
             )
-            received_task = await worker_bus.pop_task(
-                task_queue, timeout=2.0
-            )
+            received_task = await worker_bus.pop_task(task_queue)
             assert received_task is not None
             assert received_task.task_id == task_id
 
             # Worker updates status to BUSY
-            await worker_bus.set_state(
-                worker_id, "status", AgentStatus.BUSY
-            )
+            await worker_bus.write_state(worker_id, "status", AgentStatus.BUSY)
 
             # Phase 3: Worker generates result
             result_payload = ResultPayload(
@@ -310,10 +314,8 @@ def test_full_integration_scenario() -> None:
                 result_message.model_dump_json(),
             )
             # Phase 5: Cleanup - update final states
-            await worker_bus.set_state(
-                worker_id, "status", AgentStatus.IDLE
-            )
-            await orchestrator_bus.set_state(
+            await worker_bus.write_state(worker_id, "status", AgentStatus.IDLE)
+            await orchestrator_bus.write_state(
                 task_id, "status", TaskStatus.COMPLETED
             )
 
