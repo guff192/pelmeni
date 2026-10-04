@@ -10,6 +10,9 @@ from pelmeni.tools.dispatch import dispatch_and_append as dispatch_and_append
 from pelmeni.tools.file_ops import edit_file as edit_file
 from pelmeni.tools.file_ops import read_path as read_path
 from pelmeni.tools.file_ops import write_file as write_file
+from pelmeni.tools.protocol import (
+    ToolRegistryProtocol as ToolRegistryProtocol,
+)
 from pelmeni.tools.registry import BASH_TOOL as BASH_TOOL
 from pelmeni.tools.registry import DEFAULT_REGISTRY as DEFAULT_REGISTRY
 from pelmeni.tools.registry import SERIALIZED_TOOLS as SERIALIZED_TOOLS
