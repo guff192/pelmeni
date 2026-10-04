@@ -192,6 +192,7 @@ def _build_default_registry() -> ToolRegistry:
         ),
     }
     role_tools = {
+        AgentRole.MANAGER: ("read",),
         AgentRole.INVESTIGATOR: ("grep", "glob", "lsp", "read"),
         AgentRole.BUILDER: ("read", "edit", "write", "bash"),
         AgentRole.REVIEWER: ("read", "grep", "lsp", "bash"),

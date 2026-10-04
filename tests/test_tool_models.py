@@ -27,11 +27,13 @@ def _tool(name: str = "read_file") -> ToolSpec:
 def test_agent_role_values() -> None:
     """Agent roles expose the stable wire values used by configuration."""
     assert {role.value for role in AgentRole} == {
+        "manager",
         "investigator",
         "builder",
         "reviewer",
         "tester",
     }
+    assert AgentRole.MANAGER == "manager"
     assert AgentRole.INVESTIGATOR == "investigator"
     assert AgentRole.BUILDER == "builder"
     assert AgentRole.REVIEWER == "reviewer"
@@ -97,6 +99,7 @@ def test_registry_reports_tool_permission_by_name() -> None:
     assert registry.is_tool_allowed(AgentRole.BUILDER, "read_file") is False
     assert registry.is_tool_allowed(AgentRole.INVESTIGATOR, "missing") is False
 
+
 def test_registry_is_tool_allowed_unknown_role() -> None:
     """Checking tool allowance for unknown role string does not raise error."""
     registry = ToolRegistry()
@@ -104,6 +107,7 @@ def test_registry_is_tool_allowed_unknown_role() -> None:
 
     assert registry.is_tool_allowed("worker", "read_file") is False
     assert registry.is_tool_allowed("worker", "missing") is False
+
 
 def test_agent_model_schema_accepts_tool_names() -> None:
     """Agent model configuration can opt into a list of named tools."""
