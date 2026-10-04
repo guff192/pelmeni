@@ -6,8 +6,8 @@ import asyncio
 import contextlib
 import os
 import socket
-from typing import TYPE_CHECKING
 import uuid
+from typing import TYPE_CHECKING
 
 import pytest
 
