@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class AgentRole(StrEnum):
     """Supported roles for role-aware tool access."""
 
+    MANAGER = "manager"
     INVESTIGATOR = "investigator"
     BUILDER = "builder"
     REVIEWER = "reviewer"
