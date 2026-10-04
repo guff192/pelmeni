@@ -9,11 +9,12 @@ from typing import TYPE_CHECKING
 
 from pelmeni import loop
 from pelmeni.config import ConfigService
+from pelmeni.domain.agent_types import AgentType
 from pelmeni.domain.messages import SystemMessage, UserMessage
 from pelmeni.dto.hooks import HookContext
 from pelmeni.hooks.loader import load_hooks
 from pelmeni.providers import router as provider
-from pelmeni.trace import Trace
+from pelmeni.session import SessionStore
 
 if TYPE_CHECKING:
     from pelmeni.domain.messages import Message
@@ -28,7 +29,7 @@ def read_input() -> str | None:
     """Read one user line; None ends session, empty string skips turn."""
     try:
         line = input("\n> ").strip()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError, KeyboardInterrupt:
         print()
         return None
     if line == "/exit":
@@ -36,22 +37,23 @@ def read_input() -> str | None:
     return line
 
 
-def setup_session() -> tuple[list[Message], Trace, HookContext]:
+def setup_session() -> tuple[list[Message], SessionStore, HookContext]:
     """Configure providers and hooks, then create session state."""
     provider.configure(agent="reviewer")
     app_config = ConfigService().load()
     loop.tools.configure_hooks(load_hooks(app_config, app_config.raw_hooks))
-    trace = Trace(Path.cwd())
+    store = SessionStore.create(Path.cwd())
+    store.ensure_header(initial_agent=AgentType.REVIEWER)
     return (
         [SystemMessage(content=SYSTEM_PROMPT)],
-        trace,
-        HookContext(agent_role="reviewer", session_id=trace.session_id),
+        store,
+        HookContext(agent_role="reviewer", session_id=store.session_id),
     )
 
 
 def run_repl(
     messages: list[Message],
-    trace: Trace,
+    trace: SessionStore,
     context: HookContext,
 ) -> None:
     """Run the REPL loop."""

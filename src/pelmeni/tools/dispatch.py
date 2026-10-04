@@ -13,7 +13,8 @@ from pelmeni.tools import registry as reg_module
 if TYPE_CHECKING:
     from pelmeni import dto
     from pelmeni.hooks.chain import HookChain
-    from pelmeni.trace import Trace
+    from pelmeni.session import SessionStore
+
 _FUNCTION_KEY = "function"
 _NAME_KEY = "name"
 _hook_chain: HookChain | None = None
@@ -100,7 +101,7 @@ def dispatch(
 
 def dispatch_and_append(
     active_messages: list[messages.Message],
-    trace: Trace,
+    trace: SessionStore,
     call: messages.ToolCall,
     context: dto.HookContext,
     registry: reg_module.ToolRegistry,
