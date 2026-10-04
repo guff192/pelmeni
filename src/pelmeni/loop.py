@@ -16,15 +16,15 @@ from pelmeni import domain, dto, tools
 from pelmeni.providers import router as provider
 
 if TYPE_CHECKING:
+    from pelmeni.session import SessionStore
     from pelmeni.tools import ToolRegistry  # noqa: WPS458
-    from pelmeni.trace import Trace
 
 MAX_ITERATIONS = 25
 
 
 def run(  # noqa: WPS210
     messages: list[domain.Message],
-    trace: Trace,
+    trace: SessionStore,
     context: dto.HookContext | None = None,
     registry: ToolRegistry | None = None,
     compaction_config: dto.CompactionConfigSchema | None = None,

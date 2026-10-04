@@ -64,12 +64,12 @@ def main() -> None:
         run_mcp_stdio(role=parsed.role, session_id=parsed.session_id)
         return
     try:
-        messages, trace, context = setup_session()
+        messages, session_store, context = setup_session()
     except (ConfigError, provider.ProviderError) as exc:
         print(f"error: configuration failed: {exc}", file=sys.stderr)
         sys.exit(1)
 
     print(f"pelmeni | {provider.describe()}")
-    print(f"session trace: {trace.trace_file}")
+    print(f"session log: {session_store.main_log_file}")
     print("type your message; Ctrl-D or /exit to quit")
-    run_repl(messages, trace, context)
+    run_repl(messages, session_store, context)
