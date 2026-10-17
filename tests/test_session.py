@@ -308,8 +308,9 @@ def test_find_latest_session_discovers_latest_by_timestamp(
 
 def test_read_header_extracts_line_1_without_reading_entire_file(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """read_header reads line 1 without consuming the entire log file."""
+    """read_header calls readline exactly once without reading subsequent lines."""
     workspace = tmp_path / "large-log-proj"
     workspace.mkdir()
     sessions_root = tmp_path / "sessions-root"
@@ -320,10 +321,54 @@ def test_read_header_extracts_line_1_without_reading_entire_file(
         for index in range(500):
             handle.write(json.dumps({"ts": index, "event": "dummy"}) + "\n")
 
+    readline_calls = 0
+    read_calls = 0
+    readlines_calls = 0
+    original_open = Path.open
+
+    def instrumented_open(self: Path, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        file_obj = original_open(self, *args, **kwargs)
+        if (
+            self == store.main_log_file
+            and "r" in args
+            or kwargs.get("mode") == "r"
+        ):
+            nonlocal readline_calls, read_calls, readlines_calls
+            orig_readline = file_obj.readline
+            orig_read = file_obj.read
+            orig_readlines = file_obj.readlines
+
+            def tracked_readline(*r_args: object, **r_kwargs: object) -> str:
+                nonlocal readline_calls
+                readline_calls += 1
+                return orig_readline(*r_args, **r_kwargs)
+
+            def tracked_read(*r_args: object, **r_kwargs: object) -> str:
+                nonlocal read_calls
+                read_calls += 1
+                return orig_read(*r_args, **r_kwargs)
+
+            def tracked_readlines(
+                *r_args: object, **r_kwargs: object
+            ) -> list[str]:
+                nonlocal readlines_calls
+                readlines_calls += 1
+                return orig_readlines(*r_args, **r_kwargs)
+
+            monkeypatch.setattr(file_obj, "readline", tracked_readline)
+            monkeypatch.setattr(file_obj, "read", tracked_read)
+            monkeypatch.setattr(file_obj, "readlines", tracked_readlines)
+        return file_obj
+
+    monkeypatch.setattr(Path, "open", instrumented_open)
+
     header = store.read_header()
     assert header is not None
     assert header.initial_agent == AgentType.BUILDER
     assert header.session_id == store.session_id
+    assert readline_calls == 1
+    assert read_calls == 0
+    assert readlines_calls == 0
 
 
 def test_read_messages_and_read_rounds_reconstruct_domain_entities(
