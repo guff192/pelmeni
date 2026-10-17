@@ -1,3 +1,4 @@
+# flake8: noqa: WPS201,WPS202
 """Execute Antigravity requests via persistent CLI sessions."""
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from pelmeni.providers.antigravity import events
 from pelmeni.providers.base import ProviderError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from types import TracebackType
 
 
@@ -76,6 +78,26 @@ def _setup_isolated_gemini_home(
     return temp_dir
 
 
+class BridgeConversationExpiredError(ProviderError):
+    """Raised when remote bridge reports missing or expired conversation."""
+
+
+def is_conversation_expiry_error(message: str) -> bool:
+    """Check if error message indicates an expired bridge conversation."""
+    lowered = message.lower()
+    triggers = (
+        "not found",
+        "expired",
+        "purged",
+        "unknown conversation",
+        "invalid conversation",
+        "no conversation",
+    )
+    has_trigger = any(trigger in lowered for trigger in triggers)
+    has_context = "conversation" in lowered or "cache" in lowered
+    return has_trigger and has_context
+
+
 class AntigravitySession:
     """Managed persistent subprocess session for Antigravity CLI."""
 
@@ -85,15 +107,28 @@ class AntigravitySession:
         conversation_id: str | None = None,
         role: str | None = None,
         session_id: str | None = None,
+        on_init: Callable[[str], None] | None = None,
     ) -> None:
         """Initialize session parameters."""
         self.model = model
         self.conversation_id = conversation_id
         self.role = role
         self.session_id = session_id
+        self._on_init = on_init
         self.tools: list[str] = []
+        self.usage: dict[str, int] = {}
         self._process: subprocess.Popen[str] | None = None
         self._temp_dir: str | None = None
+
+    @property
+    def on_init(self) -> Callable[[str], None] | None:
+        """Return the on_init callback."""
+        return self._on_init
+
+    @on_init.setter
+    def on_init(self, callback: Callable[[str], None] | None) -> None:
+        """Set the on_init callback."""
+        self._on_init = callback
 
     def start(self) -> None:
         """Start the Antigravity background process."""
@@ -159,6 +194,29 @@ class AntigravitySession:
                 or returns an error status.
 
         """
+        try:
+            return self._execute_prompt_turn(prompt)
+        except BridgeConversationExpiredError:
+            self.close()
+            self.conversation_id = None
+            self.start()
+            return self._execute_prompt_turn(prompt)
+
+    def _dispatch_stream_line(self, line: str) -> str | None:
+        conv_id = events.extract_init_conversation_id(line)
+        if conv_id:
+            self.conversation_id = conv_id
+            if self._on_init is not None:
+                self._on_init(conv_id)
+        init_tools = events.extract_init_tools(line)
+        if init_tools is not None:
+            self.tools = init_tools
+        usage = events.extract_result_usage(line)
+        if usage is not None:
+            self.usage = usage
+        return events.extract_result_response(line)
+
+    def _execute_prompt_turn(self, prompt: str) -> str:
         if not self.is_running():
             self.start()
 
@@ -185,16 +243,8 @@ class AntigravitySession:
                 self._check_process_exit()
                 break
 
-            conv_id = events.extract_init_conversation_id(line)
-            if conv_id:
-                self.conversation_id = conv_id
-            init_tools = events.extract_init_tools(line)
-            if init_tools is not None:
-                self.tools = init_tools
-
-            res = events.extract_result_response(line)
-            if res is not None:
-                response_text = res
+            response_text = self._dispatch_stream_line(line)
+            if response_text is not None:
                 break
 
         if response_text is None:
@@ -204,18 +254,15 @@ class AntigravitySession:
 
     def _check_process_exit(self) -> None:
         """Check process exit code and raise ProviderError if failed."""
-        if not self._process:
-            message = "Antigravity process exited unexpectedly"
-            raise ProviderError(message)
-        retcode = self._process.poll()
-        if retcode is not None and retcode != 0:
+        if self._process and self._process.poll():
             stderr = self._process.stderr.read() if self._process.stderr else ""
-            message = (
-                f"Antigravity process failed with code {retcode}: {stderr}"
-            )
-            raise ProviderError(message)
-        message = "Antigravity process exited unexpectedly"
-        raise ProviderError(message)
+            retcode = self._process.poll()
+            msg = f"Antigravity process failed with code {retcode}: {stderr}"
+            if self.conversation_id and is_conversation_expiry_error(stderr):
+                raise BridgeConversationExpiredError(msg)
+            raise ProviderError(msg)
+        exit_message = "Antigravity process exited unexpectedly"
+        raise ProviderError(exit_message)
 
     def close(self) -> None:
         """Terminate process, close pipes, and clean up temporary directory."""

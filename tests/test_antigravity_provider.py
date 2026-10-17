@@ -449,3 +449,136 @@ def test_antigravity_provider_e2e_multi_turn_mcp(
 
     provider.close()
     assert provider.session is None
+
+
+def test_antigravity_turn1_on_init_callback_and_response_conv_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Turn 1 triggers on_init callback and returns conversation_id in response."""
+    monkeypatch.setattr("subprocess.Popen", MockPopen)
+    monkeypatch.setattr("shutil.which", MagicMock(return_value="agy"))
+
+    captured_conv_ids: list[str] = []
+    provider = AntigravityProvider()
+
+    res = provider.chat(
+        messages=[{"role": "user", "content": "hello"}],
+        tools=None,
+        model="antigravity:gemini-3.8-flash-low",
+        credentials=NoCredentials(provider="antigravity"),
+        on_init=captured_conv_ids.append,
+    )
+
+    assert captured_conv_ids == ["conv-123"]
+    assert res.get("conversation_id") == "conv-123"
+    provider.close()
+
+
+def test_antigravity_subsequent_turn_propagates_conversation_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Subsequent turn or resumed process receives --conversation flag."""
+    spawned_args: list[list[str]] = []
+
+    def mock_spawn(args: list[str], **kwargs: object) -> MockPopen:
+        spawned_args.append(args)
+        return MockPopen(args, **kwargs)
+
+    monkeypatch.setattr("subprocess.Popen", mock_spawn)
+    monkeypatch.setattr("shutil.which", MagicMock(return_value="agy"))
+
+    provider = AntigravityProvider()
+
+    # Turn 1: Starts fresh
+    provider.chat(
+        messages=[{"role": "user", "content": "turn 1"}],
+        tools=None,
+        model="antigravity:gemini-3.8-flash-low",
+        credentials=NoCredentials(provider="antigravity"),
+    )
+    assert "--conversation" not in spawned_args[0]
+    assert provider._conversation_id == "conv-123"
+
+    # Close previous process to simulate fresh process launch on turn 2
+    provider.close()
+
+    # Turn 2: Should pass existing conversation ID
+    provider.chat(
+        messages=[{"role": "user", "content": "turn 2"}],
+        tools=None,
+        model="antigravity:gemini-3.8-flash-low",
+        credentials=NoCredentials(provider="antigravity"),
+    )
+    assert len(spawned_args) == 2
+    assert "--conversation" in spawned_args[1]
+    assert (
+        spawned_args[1][spawned_args[1].index("--conversation") + 1]
+        == "conv-123"
+    )
+    provider.close()
+
+
+class MockExpiredThenSuccessPopen:
+    """Mock process that fails on expired conversation ID, then succeeds on fresh launch."""
+
+    invocation_count = 0
+
+    def __init__(self, args: list[str], **kwargs: object) -> None:
+        MockExpiredThenSuccessPopen.invocation_count += 1
+        self.args = args
+        self.stdin = MagicMock()
+        self.stdout = MagicMock()
+        self.stderr = MagicMock()
+        if "--conversation" in args:
+            self._running = False
+            self.poll = MagicMock(return_value=1)  # type: ignore[assignment]
+            self.stderr.read.return_value = (
+                'warning: conversation "conv-expired" not found\n'
+            )
+            self.stdout.readline.side_effect = [""]
+        else:
+            self._running = True
+            self.poll = MagicMock(return_value=None)  # type: ignore[assignment]
+            self.stderr.read.return_value = ""
+            self.stdout.readline.side_effect = [
+                '{"event":"init","conversation_id":"conv-fresh-999"}\n',
+                '{"event":"result","result":{"status":"SUCCESS","response":"Fresh recovery"}}\n',
+                "",
+            ]
+
+    def terminate(self) -> None:
+        self._running = False
+
+    def kill(self) -> None:
+        self._running = False
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
+
+def test_antigravity_fallback_on_cache_expiration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transparently falls back to fresh conversation when remote cache expires."""
+    MockExpiredThenSuccessPopen.invocation_count = 0
+    monkeypatch.setattr("subprocess.Popen", MockExpiredThenSuccessPopen)
+    monkeypatch.setattr("shutil.which", MagicMock(return_value="agy"))
+
+    new_conv_ids: list[str] = []
+    provider = AntigravityProvider()
+
+    res = provider.chat(
+        messages=[{"role": "user", "content": "retry test"}],
+        tools=None,
+        model="antigravity:gemini-3.8-flash-low",
+        credentials=NoCredentials(provider="antigravity"),
+        conversation_id="conv-expired",
+        on_init=new_conv_ids.append,
+    )
+
+    assert MockExpiredThenSuccessPopen.invocation_count == 2
+    assert res["choices"][0]["message"]["content"] == "Fresh recovery"
+    assert res.get("conversation_id") == "conv-fresh-999"
+    assert provider._conversation_id == "conv-fresh-999"
+    assert new_conv_ids == ["conv-fresh-999"]
+    provider.close()

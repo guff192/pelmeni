@@ -26,5 +26,6 @@ class SessionHeader(BaseModel):
     workspace: str
     created_at: float
     initial_agent: AgentType = AgentType.REVIEWER
+    conversation_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)  # noqa: WPS110
     model_config = ConfigDict(extra="allow")
