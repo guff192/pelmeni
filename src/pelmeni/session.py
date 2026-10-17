@@ -78,7 +78,24 @@ class SubagentLogger:
             file_handle.write(f"{line}\n")
 
 
-class SessionStore:
+def _rewrite_main_header(log_file: Path, header_line: str) -> None:  # noqa: WPS210
+    other_lines: list[str] = []
+    if log_file.exists():
+        with log_file.open("r", encoding=_UTF8) as read_handle:
+            file_lines = read_handle.readlines()
+            if len(file_lines) > 1:
+                other_lines = file_lines[1:]
+
+    temp_file = log_file.with_suffix(".tmp")
+    with temp_file.open("w", encoding=_UTF8) as write_handle:
+        write_handle.write(f"{header_line}\n")
+        for remaining in other_lines:
+            write_handle.write(remaining)
+
+    temp_file.replace(log_file)
+
+
+class SessionStore:  # noqa: WPS214
     """Manages project-scoped session directory hierarchy and session logs."""
 
     def __init__(
@@ -122,6 +139,7 @@ class SessionStore:
     def ensure_header(
         self,
         initial_agent: AgentType = AgentType.REVIEWER,
+        conversation_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> SessionHeader:
         """Ensure line-1 header record exists in main.jsonl."""
@@ -139,6 +157,7 @@ class SessionStore:
             workspace=workspace_path,
             created_at=time.time(),
             initial_agent=initial_agent,
+            conversation_id=conversation_id,
             metadata=metadata or {},
         )
         line = json.dumps(header.model_dump(), ensure_ascii=False, default=str)
@@ -146,6 +165,25 @@ class SessionStore:
         with self.main_log_file.open("a", encoding=_UTF8) as file_handle:
             file_handle.write(f"{line}\n")
         return header
+
+    def update_bridge_conversation_id(self, conversation_id: str) -> None:
+        """Record the remote bridge conversation_id in the session header."""
+        self.dir.mkdir(parents=True, exist_ok=True)
+        existing = self.read_header()
+        if existing is None:
+            self.ensure_header(conversation_id=conversation_id)
+            return
+
+        existing.conversation_id = conversation_id
+        if existing.metadata.get("conversation_id"):
+            existing.metadata["conversation_id"] = conversation_id
+
+        header_line = json.dumps(
+            existing.model_dump(),
+            ensure_ascii=False,
+            default=str,
+        )
+        _rewrite_main_header(self.main_log_file, header_line)
 
     def read_header(self) -> SessionHeader | None:
         """Fast O(1) read of line 1 session_header record."""
