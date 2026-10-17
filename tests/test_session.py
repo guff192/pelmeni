@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from pelmeni.domain import AgentType
+from pelmeni.dto.session import SessionHeader
 from pelmeni.session import (
     SessionStore,
     SubagentLogger,
@@ -193,3 +194,64 @@ def test_session_store_open_existing(tmp_path: Path) -> None:
     header = reopened.read_header()
     assert header is not None
     assert header.initial_agent == AgentType.MANAGER
+
+
+def test_session_header_conversation_id_field() -> None:
+    """SessionHeader supports optional bridge conversation_id field."""
+    header = SessionHeader(
+        session_id="sess-1",
+        workspace="/test",
+        created_at=1000.0,
+        conversation_id="conv-uuid-1",
+    )
+    assert header.conversation_id == "conv-uuid-1"
+    dumped = header.model_dump()
+    assert dumped["conversation_id"] == "conv-uuid-1"
+
+
+def test_update_bridge_conversation_id_flushes_to_header(
+    tmp_path: Path,
+) -> None:
+    """Updating conversation_id flushes directly into line-1 header."""
+    workspace = tmp_path / "bridge-proj"
+    workspace.mkdir()
+    sessions_root = tmp_path / "pelmeni-sessions"
+
+    store = SessionStore.create(workspace, sessions_root=sessions_root)
+    initial_header = store.ensure_header()
+    assert initial_header.conversation_id is None
+
+    store.update_bridge_conversation_id("agy-uuid-999")
+
+    # Fast O(1) header read returns updated conversation_id
+    updated_header = store.read_header()
+    assert updated_header is not None
+    assert updated_header.conversation_id == "agy-uuid-999"
+
+    # Line 1 in main.jsonl physically contains conversation_id
+    first_line = store.main_log_file.read_text(encoding="utf-8").splitlines()[0]
+    parsed = json.loads(first_line)
+    assert parsed["event"] == "session_header"
+    assert parsed["conversation_id"] == "agy-uuid-999"
+
+
+def test_update_bridge_conversation_id_preserves_subsequent_events(
+    tmp_path: Path,
+) -> None:
+    """Updating conversation_id preserves subsequent events."""
+    workspace = tmp_path / "bridge-events-proj"
+    workspace.mkdir()
+    sessions_root = tmp_path / "pelmeni-sessions"
+
+    store = SessionStore.create(workspace, sessions_root=sessions_root)
+    store.ensure_header()
+    store.log("request", {"prompt": "turn 1 prompt"})
+    store.log("response", {"answer": "turn 1 answer"})
+
+    store.update_bridge_conversation_id("agy-uuid-preserved")
+
+    lines = store.main_log_file.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3
+    assert json.loads(lines[0])["conversation_id"] == "agy-uuid-preserved"
+    assert json.loads(lines[1])["event"] == "request"
+    assert json.loads(lines[2])["event"] == "response"
