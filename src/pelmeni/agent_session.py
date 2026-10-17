@@ -7,14 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pelmeni import context as ctx
-from pelmeni import domain, tools
-from pelmeni.domain.agent_profiles import get_agent_profile
-from pelmeni.domain.messages import SystemMessage, UserMessage
-from pelmeni.dto.context import CompactionConfigSchema
-from pelmeni.dto.hooks import ExecutionContext, HookContext
-from pelmeni.providers import router as provider_module
-from pelmeni.providers.base import ProviderError
-from pelmeni.tools.dispatch import dispatch_and_append
+from pelmeni import domain, dto, providers, tools
 
 if TYPE_CHECKING:
     from pelmeni.context.protocol import ContextCompactor
@@ -35,9 +28,85 @@ class SessionConfig:
     trace: SessionStore | None = None
     registry: ToolRegistry | None = None
     hook_chain: HookChain | None = None
-    compaction_config: CompactionConfigSchema | None = None
+    compaction_config: dto.CompactionConfigSchema | None = None
     compactor: ContextCompactor | None = None
     max_iterations: int = _DEFAULT_MAX_ITERATIONS
+
+
+def _chat_provider(
+    provider: Any,
+    messages: list[dict[str, Any]],
+    tool_specs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Dispatch chat request to the bound provider instance."""
+    if hasattr(provider, "chat"):
+        return provider.chat(
+            messages=messages,
+            tools=tool_specs,
+        )
+    error_msg = f"Provider object {provider} does not support chat"
+    raise providers.ProviderError(error_msg)
+
+
+def _request_turn(
+    provider: Any,
+    messages: list[domain.Message],
+    serialized_tools: list[dict[str, Any]],
+    trace: SessionStore | None,
+    agent_type: str,
+) -> dict[str, Any] | None:
+    """Serialize messages, record trace request, and query provider."""
+    serialized_messages = [domain.message_to_dto(msg) for msg in messages]
+    if trace is not None:
+        trace.log(
+            "request",
+            {
+                "messages": serialized_messages,
+                "tools": serialized_tools,
+                "agent_type": agent_type,
+            },
+        )
+    try:
+        resp = _chat_provider(provider, serialized_messages, serialized_tools)
+    except providers.ProviderError as exc:
+        print(f"error: LLM request failed: {exc}", file=sys.stderr)
+        return None
+    if trace is not None:
+        trace.log("response", resp)
+    return resp
+
+
+def _handle_turn_response(
+    resp: dict[str, Any],
+    messages: list[domain.Message],
+) -> tuple[bool, str, tuple[domain.ToolCall, ...]]:
+    """Parse assistant response and return termination flag and tool calls."""
+    raw_msg = resp["choices"][0]["message"]
+    assistant_msg = domain.message_from_dto(raw_msg)
+    messages.append(assistant_msg)
+    if not isinstance(assistant_msg, domain.AssistantMessage):
+        return True, assistant_msg.content or "", ()
+    if not assistant_msg.tool_calls:
+        return True, assistant_msg.content or "", ()
+    return False, "", assistant_msg.tool_calls
+
+
+def _dispatch_tool_calls(
+    messages: list[domain.Message],
+    trace: SessionStore | None,
+    tool_calls: tuple[domain.ToolCall, ...],
+    exec_ctx: dto.ExecutionContext,
+) -> dto.ExecutionContext:
+    """Execute each tool call sequentially and return updated context."""
+    active_ctx = exec_ctx
+    for call in tool_calls:
+        active_ctx = tools.dispatch_and_append(
+            messages,
+            trace,
+            call,
+            active_ctx,
+        )
+    return active_ctx
 
 
 class AgentSession:
@@ -53,7 +122,7 @@ class AgentSession:
         self._profile = profile
         self._trace = session_config.trace
         self._compaction_config = (
-            session_config.compaction_config or CompactionConfigSchema()
+            session_config.compaction_config or dto.CompactionConfigSchema()
         )
         self._compactor = (
             session_config.compactor or ctx.get_default_compactor()
@@ -61,7 +130,7 @@ class AgentSession:
         self._max_iterations = session_config.max_iterations
 
         if session_config.provider is None:
-            local_router = provider_module.ProviderRouter()
+            local_router = providers.ProviderRouter()
             local_router.configure(agent=profile.model_alias)
             self._provider = local_router
         else:
@@ -69,18 +138,18 @@ class AgentSession:
 
         session_id = self._trace.session_id if self._trace else "default"
         active_registry = session_config.registry or tools.DEFAULT_REGISTRY
-        hook_ctx = HookContext(
+        hook_ctx = dto.HookContext(
             agent_role=profile.agent_type.value,
             session_id=session_id,
         )
-        self._execution_context = ExecutionContext(
+        self._execution_context = dto.ExecutionContext(
             hook_context=hook_ctx,
             registry=active_registry,
             hook_chain=session_config.hook_chain,
         )
 
         self._messages: list[domain.Message] = [
-            SystemMessage(content=profile.system_prompt),
+            domain.SystemMessage(content=profile.system_prompt),
         ]
 
     @property
@@ -89,24 +158,14 @@ class AgentSession:
         return self._profile
 
     @property
-    def agent_type(self) -> AgentType:
-        """AgentType of this session."""
-        return self._profile.agent_type
-
-    @property
     def messages(self) -> list[domain.Message]:
         """Mutable message history for this session."""
         return self._messages
 
     @property
-    def execution_context(self) -> ExecutionContext:
+    def execution_context(self) -> dto.ExecutionContext:
         """Current execution context."""
         return self._execution_context
-
-    @property
-    def hook_context(self) -> HookContext:
-        """Current hook execution context."""
-        return self._execution_context.hook_context
 
     def step(self, user_prompt: str | None = None) -> str:
         """Execute one conversational step or turn iteration cycle.
@@ -114,7 +173,7 @@ class AgentSession:
         Returns final assistant text response or empty string on failure.
         """
         if user_prompt is not None:
-            self._messages.append(UserMessage(content=user_prompt))
+            self._messages.append(domain.UserMessage(content=user_prompt))
 
         serialized_tools = (
             self._execution_context.registry.get_serialized_tools(
@@ -153,20 +212,6 @@ class AgentSession:
                     },
                 )
 
-    def _chat_provider(
-        self,
-        serialized_messages: list[dict[str, Any]],
-        serialized_tools: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """Dispatch chat request to the bound provider instance."""
-        if hasattr(self._provider, "chat"):
-            return self._provider.chat(
-                messages=serialized_messages,
-                tools=serialized_tools,
-            )
-        error_msg = f"Provider object {self._provider} does not support chat"
-        raise ProviderError(error_msg)
-
     def _execute_turn(
         self,
         serialized_tools: list[dict[str, Any]],
@@ -176,45 +221,29 @@ class AgentSession:
         Returns a tuple of (done: bool, response_text: str).
         """
         self._compact_context_if_needed()
-
-        serialized_messages = [
-            domain.message_to_dto(msg) for msg in self._messages
-        ]
-        if self._trace is not None:
-            self._trace.log(
-                "request",
-                {
-                    "messages": serialized_messages,
-                    "tools": serialized_tools,
-                    "agent_type": self._profile.agent_type.value,
-                },
-            )
-
-        try:
-            resp = self._chat_provider(serialized_messages, serialized_tools)
-        except ProviderError as exc:
-            print(f"error: LLM request failed: {exc}", file=sys.stderr)
+        resp = _request_turn(
+            self._provider,
+            self._messages,
+            serialized_tools,
+            self._trace,
+            self._profile.agent_type.value,
+        )
+        if resp is None:
             return True, ""
 
-        if self._trace is not None:
-            self._trace.log("response", resp)
+        is_terminal, answer_text, tool_calls = _handle_turn_response(
+            resp,
+            self._messages,
+        )
+        if is_terminal:
+            return True, answer_text
 
-        raw_msg = resp["choices"][0]["message"]
-        assistant_msg = domain.message_from_dto(raw_msg)
-        self._messages.append(assistant_msg)
-
-        if not isinstance(assistant_msg, domain.AssistantMessage):
-            return True, assistant_msg.content or ""
-        if not assistant_msg.tool_calls:
-            return True, assistant_msg.content or ""
-
-        for call in assistant_msg.tool_calls:
-            self._execution_context = dispatch_and_append(
-                self._messages,
-                self._trace,
-                call,
-                self._execution_context,
-            )
+        self._execution_context = _dispatch_tool_calls(
+            self._messages,
+            self._trace,
+            tool_calls,
+            self._execution_context,
+        )
         return False, ""
 
 
@@ -226,7 +255,7 @@ def create_agent_session(
     """Factory creating an AgentSession with standard resolved profile."""
     session_config = config or SessionConfig()
     registry = session_config.registry or tools.DEFAULT_REGISTRY
-    profile = get_agent_profile(
+    profile = domain.get_agent_profile(
         agent_type=agent_type,
         model_alias=model_alias,
         registry=registry,
