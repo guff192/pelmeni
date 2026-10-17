@@ -137,3 +137,16 @@ _Avoid_: LLM client, model adapter, backend
 **Task Payload**:
 The structured work description routed between Agent Sessions via the bus. May originate as a user Prompt or as a Brief produced by another Agent Session.
 _Avoid_: task, message, work item
+### User Interface
+
+**Prompt Box**:
+The transient, framed input area in the terminal where the user types and edits a multiline Prompt.
+_Avoid_: input box, entry frame, prompt container
+
+**Thinking Block**:
+The styled reasoning output emitted by an agent model during an active Turn before producing an answer or invoking a Tool.
+_Avoid_: reasoning block, thought block, scratchpad
+
+**Tool Summary**:
+The compact status record in the terminal stream displaying an invoked Tool's execution state, duration, and condensed output.
+_Avoid_: tool card, execution snippet, tool widget
