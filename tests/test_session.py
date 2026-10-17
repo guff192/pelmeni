@@ -22,6 +22,9 @@ from pelmeni.session import (
     SubagentLogger,
     derive_session_path,
     find_latest_session,
+    open_session,
+    read_session_messages,
+    read_session_rounds,
     slugify_workspace,
 )
 
@@ -198,7 +201,7 @@ def test_session_store_open_existing(tmp_path: Path) -> None:
     store.ensure_header(initial_agent=AgentType.MANAGER)
     store.log("turn_1", {"data": 123})
 
-    reopened = SessionStore.open(store.dir)
+    reopened = open_session(store.dir)
     assert reopened.dir == store.dir
     assert reopened.session_id == store.session_id
     assert reopened.subagents_dir == store.subagents_dir
@@ -365,7 +368,7 @@ def test_read_messages_and_read_rounds_reconstruct_domain_entities(
     )
     store.log("response", message_to_dto(assistant_msg_3))
 
-    reconstructed_messages = store.read_messages()
+    reconstructed_messages = read_session_messages(store)
     expected_messages = [
         sys_msg,
         user_msg_1,
@@ -377,7 +380,7 @@ def test_read_messages_and_read_rounds_reconstruct_domain_entities(
     ]
     assert reconstructed_messages == expected_messages
 
-    rounds = store.read_rounds()
+    rounds = read_session_rounds(store)
     assert len(rounds) == 2
     assert rounds[0].user == user_msg_1
     assert rounds[0].turns == (assistant_msg_1, tool_msg, assistant_msg_2)
@@ -410,7 +413,7 @@ def test_corrupted_lines_are_logged_and_skipped(
     store.log("response", message_to_dto(assistant_msg))
 
     with caplog.at_level(logging.WARNING):
-        messages = store.read_messages()
+        messages = read_session_messages(store)
 
     assert user_msg in messages
     assert assistant_msg in messages
@@ -450,10 +453,10 @@ def test_session_store_write_read_roundtrip(tmp_path: Path) -> None:
         {"choices": [{"message": message_to_dto(a2)}]},
     )
 
-    loaded_messages = store.read_messages()
+    loaded_messages = read_session_messages(store)
     assert loaded_messages == [sys_msg, u1, a1, t1, a2]
 
-    loaded_rounds = store.read_rounds()
+    loaded_rounds = read_session_rounds(store)
     assert len(loaded_rounds) == 1
     assert loaded_rounds[0].user == u1
     assert loaded_rounds[0].turns == (a1, t1, a2)
