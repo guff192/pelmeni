@@ -1,7 +1,6 @@
 """Facade provider layer dispatching to backend provider instances."""
 
-from __future__ import annotations
-
+import inspect
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -11,7 +10,7 @@ from pelmeni.providers.base import Provider, ProviderError
 from pelmeni.providers.factory import ProviderFactory
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from pelmeni.config.models import ModelSpec
 
@@ -75,6 +74,8 @@ class ProviderRouter:
         self,
         messages: list[dict[str, Any]],
         tools: Sequence[dict[str, Any]] | None = None,
+        conversation_id: str | None = None,
+        on_init: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         """Dispatch chat request to configured provider implementation."""
         if self._model is None or self._provider is None:
@@ -83,13 +84,20 @@ class ProviderRouter:
 
         credentials = self._auth_manager.resolve(self._model.provider)
 
+        call_kwargs: dict[str, Any] = {
+            "messages": messages,
+            "tools": tools,
+            "model": self._model.model,
+            "credentials": credentials,
+        }
+        chat_params = inspect.signature(self._provider.chat).parameters
+        if conversation_id is not None and "conversation_id" in chat_params:
+            call_kwargs["conversation_id"] = conversation_id
+        if on_init is not None and "on_init" in chat_params:
+            call_kwargs["on_init"] = on_init
+
         try:
-            return self._provider.chat(
-                messages=messages,
-                tools=tools,
-                model=self._model.model,
-                credentials=credentials,
-            )
+            return self._provider.chat(**call_kwargs)  # type: ignore[call-arg]
         except ProviderError:
             raise
         except Exception as exc:
@@ -126,6 +134,13 @@ def describe() -> str:
 def chat(
     messages: list[dict[str, Any]],
     tools: Sequence[dict[str, Any]] | None = None,
+    conversation_id: str | None = None,
+    on_init: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Dispatch chat via module router."""
-    return _ROUTER.chat(messages=messages, tools=tools)
+    return _ROUTER.chat(
+        messages=messages,
+        tools=tools,
+        conversation_id=conversation_id,
+        on_init=on_init,
+    )

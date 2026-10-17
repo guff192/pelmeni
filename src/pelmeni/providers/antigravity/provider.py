@@ -9,8 +9,9 @@ from pelmeni.providers.antigravity import process
 from pelmeni.providers.base import Provider, ProviderCredentials, ProviderError
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from types import TracebackType
+    from typing import Any
 
 
 def _build_policy_prompt(
@@ -88,14 +89,15 @@ class AntigravityProvider(Provider):
         """Return the underlying AntigravitySession instance."""
         return self._session
 
-    def chat(
+    def chat(  # noqa: WPS211,PLR0913,PLR0917
         self,
         messages: list[dict],
         tools: Sequence[dict] | None,
         model: str,
         credentials: ProviderCredentials,
         conversation_id: str | None = None,
-    ) -> dict:
+        on_init: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
         """Return assistant text from user and assistant message history.
 
         Authentication and tools use local CLI settings.
@@ -107,6 +109,7 @@ class AntigravityProvider(Provider):
             model: Required non-empty protocol model identifier.
             credentials: Protocol credentials validated before local CLI use.
             conversation_id: Existing conversation identifier to resume.
+            on_init: Optional callback receiving the bridge conversation_id.
 
         Returns:
             OpenAI-shaped response containing the assistant text.
@@ -123,17 +126,40 @@ class AntigravityProvider(Provider):
                 conversation_id=self._conversation_id,
                 role=self._role,
                 session_id=self._session_id,
+                on_init=on_init,
             )
-        response_text = self._session.send_prompt(prompt)
+        elif on_init is not None:
+            self._session.on_init = on_init
+
+        try:
+            response_text = self._session.send_prompt(prompt)
+        except process.BridgeConversationExpiredError:
+            self.close()
+            self._conversation_id = None
+            self._session = process.AntigravitySession(
+                model=model,
+                conversation_id=None,
+                role=self._role,
+                session_id=self._session_id,
+                on_init=on_init,
+            )
+            response_text = self._session.send_prompt(prompt)
+
         if self._session.conversation_id:
             self._conversation_id = self._session.conversation_id
         if self._session.tools:
             self.__class__.tools = list(self._session.tools)
-        return {
+
+        resp: dict[str, Any] = {
             "choices": [
                 {"message": {"role": "assistant", "content": response_text}},
             ],
         }
+        if self._conversation_id:
+            resp["conversation_id"] = self._conversation_id
+        if self._session.usage:
+            resp["usage"] = dict(self._session.usage)
+        return resp
 
     def close(self) -> None:
         """Close the underlying session if active."""
