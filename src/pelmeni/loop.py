@@ -63,13 +63,25 @@ def run(  # noqa: WPS210
             "request",
             {"messages": serialized_messages, "tools": serialized_tools},
         )
+        conv_id: str | None = None
+        header = trace.read_header()
+        if header is not None:
+            conv_id = header.conversation_id
+
         try:
-            resp = provider.chat(serialized_messages, serialized_tools)
+            resp = provider.chat(
+                serialized_messages,
+                serialized_tools,
+                conversation_id=conv_id,
+                on_init=trace.update_bridge_conversation_id,
+            )
         except provider.ProviderError as exc:
             print(f"error: LLM request failed: {exc}", file=sys.stderr)
             return ""
         trace.log("response", resp)
 
+        if resp.get("conversation_id"):
+            trace.update_bridge_conversation_id(resp["conversation_id"])
         raw_msg = resp["choices"][0]["message"]
         assistant_msg = domain.message_from_dto(raw_msg)
         messages.append(assistant_msg)
