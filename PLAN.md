@@ -1,34 +1,38 @@
 # Development plan for pelmeni
 
-All 18 implementation ticket issues (**#23 through #40**) have been marked with the new label **`ticket`**.
+All implementation ticket issues have been cataloged with their dependency graph and status.
 
 ---
 
 ### Detailed Dependency Breakdown by Tier
 
-#### Tier 1: The Frontier (Zero Blockers — Ready for Immediate Work)
-- **#32: Common Bus Protocol & Zero-Docker InMemoryBus Fallback**
-  - *Blocked by:* **None**
-  - *Delivers:* `BusProtocol` interface and in-process `InMemoryBus` (`asyncio.Queue` + `dict`), allowing multi-agent tests and local dev to run without Docker or Redis.
-- **#33: Domain Agent Profiles & Role System Prompt Loader**
-  - *Blocked by:* **None**
-  - *Delivers:* Pure domain `AgentProfile` dataclass, baseline prompts for all 5 roles (`manager`, `investigator`, `builder`, `reviewer`, `tester`), and `~/.config/pelmeni/agents/<role>.md` override loader.
-- **#34: Project Session Hierarchy & Isolated Subagent Session Logs**
-  - *Blocked by:* **None**
-  - *Delivers:* Disk layout `~/.pelmeni/sessions/<project>/.../`, `main.jsonl` with fast line-1 `session_header`, and `subagents/<role>_<timestamp>_<id>.jsonl` isolated trace logger.
-- **#36: Interactive REPL UX Overhaul with Prompt Toolkit & Command History**
-  - *Blocked by:* **None**
-  - *Delivers:* `prompt_toolkit` integration with Readline keybindings, multiline `Shift+Enter`, persistent history in `~/.pelmeni/history`, and auto-completing slash-command menu.
+#### Completed Foundation Tickets
+- [x] **#32: Common Bus Protocol & Zero-Docker InMemoryBus Fallback**
+- [x] **#33: Domain Agent Profiles & Role System Prompt Loader**
+- [x] **#34: Project Session Hierarchy & Isolated Subagent Session Logs**
+- [x] **#36: Interactive REPL UX Overhaul with Prompt Toolkit & Command History**
 
 ---
 
-#### Tier 2: Provider Continuity & Session Execution
+#### Tier 1: The Active Frontier (Zero Blockers — Ready for Work)
+- **#48: Spike: Evaluate rich vs textual for REPL terminal rendering in tmux**
+  - *Blocked by:* **None**
+  - *Parent:* Spec [#47](https://github.com/guff192/pelmeni/issues/47)
+  - *Delivers:* Standalone spike evaluating tmux natural scrolling, copy-mode selection, and live in-place rendering between `rich` and `textual` to lock the UI architecture.
+- **#49: Transient Framed Prompt Box with Agent Type Header**
+  - *Blocked by:* **None**
+  - *Parent:* Spec [#47](https://github.com/guff192/pelmeni/issues/47)
+  - *Delivers:* Bordered prompt input box using `prompt_toolkit` with `show_frame=~is_done` and dynamic `[AgentType: Model]` header, disappearing cleanly on submit.
+
+---
+
+#### Tier 2: Provider Continuity, Session Execution & Terminal UX Enhancements
 - **#35: Bridge Conversation ID Continuity & TPU Prefix Cache Preservation**
   - *Blocked by:* **#34**
-  - *Why:* Needs the `session_header` in `main.jsonl` (from #34) to store and reload the remote bridge `conversation_id`, and propagates it to `--conversation <uuid>` on subsequent turns.
+  - *Why:* Needs the `session_header` in `main.jsonl` (from #34) to store and reload the remote bridge `conversation_id`, propagating it to `--conversation <uuid>` on subsequent turns.
 - **#38: Consolidate AgentSession Execution Module with Isolated Context & Turn Coordination**
   - *Blocked by:* **#33**
-  - *Why:* Needs pure domain `AgentProfile` and role system prompt loader (from #33) to initialize each session's profile, model resolution, and allowed tool whitelist.
+  - *Why:* Needs pure domain `AgentProfile` and role system prompt loader (from #33) to initialize each session's profile, model resolution, and tool whitelist.
   - *Delivers:* Deep `AgentSession` module encapsulating message history, per-session context compaction (`TruncateCompactor`), tool execution without global hook state, and a stepping interface.
 - **#39: Refactor RedisBus into Private-Key Adapter with Async PubSub Subscription**
   - *Blocked by:* **#32**
@@ -38,6 +42,16 @@ All 18 implementation ticket issues (**#23 through #40**) have been marked with 
   - *Blocked by:* **#34**
   - *Why:* Needs the project session directory hierarchy and `main.jsonl` writer (from #34) to implement session discovery, line-1 header reading, and domain round deserialization.
   - *Delivers:* `SessionStore` reader interface with `find_latest_session()`, `read_header()`, and `read_rounds()`, tested end-to-end against recorded session traces.
+- **#50: Thinking Block Stream & Live Ctrl+T Toggle**
+  - *Blocked by:* **#48**
+  - *Parent:* Spec [#47](https://github.com/guff192/pelmeni/issues/47)
+  - *Why:* Needs the spike outcome (#48) to integrate in-place stream line updates into the chosen terminal UI engine.
+  - *Delivers:* Muted grey streaming reasoning blocks with mid-stream `Ctrl+T` collapse to a single-line indicator, permanently committing to stdout upon completion.
+- **#51: Two-Stage Tool Summary & Interactive /inspect Pager**
+  - *Blocked by:* **#48**
+  - *Parent:* Spec [#47](https://github.com/guff192/pelmeni/issues/47)
+  - *Why:* Needs the spike outcome (#48) to integrate in-flight and completed tool status cards with `$PAGER` inspection.
+  - *Delivers:* In-flight tool status indicator updating in-place to compact duration/elided summaries, plus `/inspect` slash command launching `$PAGER` on full tool output.
 - **#37: REPL Session Resumption & Continuation**
   - *Blocked by:* **#36**, **#38**, **#40**
   - *Why:* Needs #40's `SessionStore` reader to parse `main.jsonl` into domain messages and rounds, #36's `prompt_toolkit` loop, and #38's `AgentSession` to hydrate restored message history and resume interactive prompting.
@@ -92,8 +106,10 @@ All 18 implementation ticket issues (**#23 through #40**) have been marked with 
 
 ### Active Frontier Summary
 
-The 4 tickets with **zero blockers** that can be started concurrently right now:
-1. **#32** — `Common Bus Protocol & Zero-Docker InMemoryBus Fallback`
-2. **#33** — `Domain Agent Profiles & Role System Prompt Loader`
-3. **#34** — `Project Session Hierarchy & Isolated Subagent Session Logs`
-4. **#36** — `Interactive REPL UX Overhaul with Prompt Toolkit & Command History`
+The unblocked tickets ready for immediate work:
+1. **#48** — `Spike: Evaluate rich vs textual for REPL terminal rendering in tmux` (UI evaluation)
+2. **#49** — `Transient Framed Prompt Box with Agent Type Header` (Prompt Box)
+3. **#35** — `Bridge Conversation ID Continuity & TPU Prefix Cache Preservation` (TPU cache)
+4. **#38** — `Consolidate AgentSession Execution Module with Isolated Context & Turn Coordination` (Agent sessions)
+5. **#39** — `Refactor RedisBus into Private-Key Adapter with Async PubSub Subscription` (Bus pub/sub)
+6. **#40** — `SessionStore History Deserializer & Domain Round Reconstruction Reader` (Session reader)
