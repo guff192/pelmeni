@@ -40,6 +40,77 @@ class SessionConfig:
     max_iterations: int = _DEFAULT_MAX_ITERATIONS
 
 
+def _chat_provider(
+    provider: Any,
+    messages: list[dict[str, Any]],
+    tool_specs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Dispatch chat request to the bound provider instance."""
+    if hasattr(provider, "chat"):
+        return provider.chat(
+            messages=messages,
+            tools=tool_specs,
+        )
+    error_msg = f"Provider object {provider} does not support chat"
+    raise ProviderError(error_msg)
+
+
+def _request_turn(
+    provider: Any,
+    messages: list[domain.Message],
+    serialized_tools: list[dict[str, Any]],
+    trace: SessionStore | None,
+    agent_type: str,
+) -> dict[str, Any] | None:
+    """Serialize messages, record trace request, and query provider."""
+    serialized_messages = [domain.message_to_dto(msg) for msg in messages]
+    if trace is not None:
+        trace.log(
+            "request",
+            {
+                "messages": serialized_messages,
+                "tools": serialized_tools,
+                "agent_type": agent_type,
+            },
+        )
+    try:
+        resp = _chat_provider(provider, serialized_messages, serialized_tools)
+    except ProviderError as exc:
+        print(f"error: LLM request failed: {exc}", file=sys.stderr)
+        return None
+    if trace is not None:
+        trace.log("response", resp)
+    return resp
+
+
+def _handle_turn_response(
+    resp: dict[str, Any],
+    messages: list[domain.Message],
+) -> tuple[bool, str, tuple[domain.ToolCall, ...]]:
+    """Parse assistant response and return termination flag and tool calls."""
+    raw_msg = resp["choices"][0]["message"]
+    assistant_msg = domain.message_from_dto(raw_msg)
+    messages.append(assistant_msg)
+    if not isinstance(assistant_msg, domain.AssistantMessage):
+        return True, assistant_msg.content or "", ()
+    if not assistant_msg.tool_calls:
+        return True, assistant_msg.content or "", ()
+    return False, "", assistant_msg.tool_calls
+
+
+def _dispatch_tool_calls(
+    messages: list[domain.Message],
+    trace: SessionStore | None,
+    tool_calls: tuple[domain.ToolCall, ...],
+    exec_ctx: ExecutionContext,
+) -> ExecutionContext:
+    """Execute each tool call sequentially and return updated context."""
+    active_ctx = exec_ctx
+    for call in tool_calls:
+        active_ctx = dispatch_and_append(messages, trace, call, active_ctx)
+    return active_ctx
+
+
 class AgentSession:
     """Manages an individual agent's lifecycle, isolated context, and turns."""
 
@@ -153,20 +224,6 @@ class AgentSession:
                     },
                 )
 
-    def _chat_provider(
-        self,
-        serialized_messages: list[dict[str, Any]],
-        serialized_tools: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """Dispatch chat request to the bound provider instance."""
-        if hasattr(self._provider, "chat"):
-            return self._provider.chat(
-                messages=serialized_messages,
-                tools=serialized_tools,
-            )
-        error_msg = f"Provider object {self._provider} does not support chat"
-        raise ProviderError(error_msg)
-
     def _execute_turn(
         self,
         serialized_tools: list[dict[str, Any]],
@@ -176,45 +233,29 @@ class AgentSession:
         Returns a tuple of (done: bool, response_text: str).
         """
         self._compact_context_if_needed()
-
-        serialized_messages = [
-            domain.message_to_dto(msg) for msg in self._messages
-        ]
-        if self._trace is not None:
-            self._trace.log(
-                "request",
-                {
-                    "messages": serialized_messages,
-                    "tools": serialized_tools,
-                    "agent_type": self._profile.agent_type.value,
-                },
-            )
-
-        try:
-            resp = self._chat_provider(serialized_messages, serialized_tools)
-        except ProviderError as exc:
-            print(f"error: LLM request failed: {exc}", file=sys.stderr)
+        resp = _request_turn(
+            self._provider,
+            self._messages,
+            serialized_tools,
+            self._trace,
+            self._profile.agent_type.value,
+        )
+        if resp is None:
             return True, ""
 
-        if self._trace is not None:
-            self._trace.log("response", resp)
+        is_terminal, answer_text, tool_calls = _handle_turn_response(
+            resp,
+            self._messages,
+        )
+        if is_terminal:
+            return True, answer_text
 
-        raw_msg = resp["choices"][0]["message"]
-        assistant_msg = domain.message_from_dto(raw_msg)
-        self._messages.append(assistant_msg)
-
-        if not isinstance(assistant_msg, domain.AssistantMessage):
-            return True, assistant_msg.content or ""
-        if not assistant_msg.tool_calls:
-            return True, assistant_msg.content or ""
-
-        for call in assistant_msg.tool_calls:
-            self._execution_context = dispatch_and_append(
-                self._messages,
-                self._trace,
-                call,
-                self._execution_context,
-            )
+        self._execution_context = _dispatch_tool_calls(
+            self._messages,
+            self._trace,
+            tool_calls,
+            self._execution_context,
+        )
         return False, ""
 
 
