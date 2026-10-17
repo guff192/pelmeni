@@ -5,12 +5,23 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pelmeni.domain import AgentType
+import logging
+
+from pelmeni.domain import (
+    AgentType,
+    AssistantMessage,
+    SystemMessage,
+    ToolCall,
+    ToolMessage,
+    UserMessage,
+    message_to_dto,
+)
 from pelmeni.dto.session import SessionHeader
 from pelmeni.session import (
     SessionStore,
     SubagentLogger,
     derive_session_path,
+    find_latest_session,
     slugify_workspace,
 )
 
@@ -255,3 +266,194 @@ def test_update_bridge_conversation_id_preserves_subsequent_events(
     assert json.loads(lines[0])["conversation_id"] == "agy-uuid-preserved"
     assert json.loads(lines[1])["event"] == "request"
     assert json.loads(lines[2])["event"] == "response"
+
+
+def test_find_latest_session_returns_none_if_no_sessions(
+    tmp_path: Path,
+) -> None:
+    """find_latest_session returns None when no project directory exists."""
+    workspace = tmp_path / "empty-proj"
+    workspace.mkdir()
+    sessions_root = tmp_path / "sessions-root"
+    assert find_latest_session(workspace, sessions_root=sessions_root) is None
+
+
+def test_find_latest_session_discovers_latest_by_timestamp(
+    tmp_path: Path,
+) -> None:
+    """find_latest_session returns session directory with latest timestamp."""
+    workspace = tmp_path / "my-workspace"
+    workspace.mkdir()
+    sessions_root = tmp_path / "sessions-root"
+    project_slug = slugify_workspace(workspace)
+    proj_dir = sessions_root / project_slug
+    proj_dir.mkdir(parents=True)
+
+    session_older = proj_dir / "20261017T100000Z_my-workspace_abc12345"
+    session_middle = proj_dir / "20261017T110000Z_my-workspace_def67890"
+    session_newest = proj_dir / "20261017T120000Z_my-workspace_fff00000"
+
+    for s_dir in (session_older, session_middle, session_newest):
+        s_dir.mkdir()
+        (s_dir / "main.jsonl").write_text("{}\n", encoding="utf-8")
+
+    (proj_dir / "random_file.txt").write_text("ignore", encoding="utf-8")
+
+    latest = find_latest_session(workspace, sessions_root=sessions_root)
+    assert latest == session_newest
+
+
+def test_read_header_extracts_line_1_without_reading_entire_file(
+    tmp_path: Path,
+) -> None:
+    """read_header reads line 1 without consuming the entire log file."""
+    workspace = tmp_path / "large-log-proj"
+    workspace.mkdir()
+    sessions_root = tmp_path / "sessions-root"
+    store = SessionStore.create(workspace, sessions_root=sessions_root)
+    store.ensure_header(initial_agent=AgentType.BUILDER)
+
+    with store.main_log_file.open("a", encoding="utf-8") as handle:
+        for index in range(500):
+            handle.write(json.dumps({"ts": index, "event": "dummy"}) + "\n")
+
+    header = store.read_header()
+    assert header is not None
+    assert header.initial_agent == AgentType.BUILDER
+    assert header.session_id == store.session_id
+
+
+def test_read_messages_and_read_rounds_reconstruct_domain_entities(
+    tmp_path: Path,
+) -> None:
+    """read_messages and read_rounds correctly reconstruct conversation."""
+    workspace = tmp_path / "reconstruction-proj"
+    workspace.mkdir()
+    sessions_root = tmp_path / "sessions-root"
+    store = SessionStore.create(workspace, sessions_root=sessions_root)
+    store.ensure_header()
+
+    sys_msg = SystemMessage(content="You are pelmeni.")
+    user_msg_1 = UserMessage(content="Hello!")
+    tool_call = ToolCall(id="tc-1", name="read", arguments='{"path": "a.txt"}')
+    assistant_msg_1 = AssistantMessage(content=None, tool_calls=(tool_call,))
+    tool_msg = ToolMessage(tool_call_id="tc-1", content="file content")
+    assistant_msg_2 = AssistantMessage(content="Read done", tool_calls=())
+    user_msg_2 = UserMessage(content="Next step")
+    assistant_msg_3 = AssistantMessage(content="Finished", tool_calls=())
+
+    store.log(
+        "request",
+        {"messages": [message_to_dto(sys_msg), message_to_dto(user_msg_1)]},
+    )
+    store.log("response", message_to_dto(assistant_msg_1))
+    store.log("tool_result", message_to_dto(tool_msg))
+    store.log("response", message_to_dto(assistant_msg_2))
+
+    store.log(
+        "request",
+        {
+            "messages": [
+                message_to_dto(sys_msg),
+                message_to_dto(user_msg_1),
+                message_to_dto(assistant_msg_1),
+                message_to_dto(tool_msg),
+                message_to_dto(assistant_msg_2),
+                message_to_dto(user_msg_2),
+            ],
+        },
+    )
+    store.log("response", message_to_dto(assistant_msg_3))
+
+    reconstructed_messages = store.read_messages()
+    expected_messages = [
+        sys_msg,
+        user_msg_1,
+        assistant_msg_1,
+        tool_msg,
+        assistant_msg_2,
+        user_msg_2,
+        assistant_msg_3,
+    ]
+    assert reconstructed_messages == expected_messages
+
+    rounds = store.read_rounds()
+    assert len(rounds) == 2
+    assert rounds[0].user == user_msg_1
+    assert rounds[0].turns == (assistant_msg_1, tool_msg, assistant_msg_2)
+    assert rounds[1].user == user_msg_2
+    assert rounds[1].turns == (assistant_msg_3,)
+
+
+def test_corrupted_lines_are_logged_and_skipped(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Malformed or invalid JSON lines are safely skipped and logged."""
+    workspace = tmp_path / "corrupted-log-proj"
+    workspace.mkdir()
+    sessions_root = tmp_path / "sessions-root"
+    store = SessionStore.create(workspace, sessions_root=sessions_root)
+    store.ensure_header()
+
+    user_msg = UserMessage(content="Valid question")
+    store.log("user_message", message_to_dto(user_msg))
+
+    with store.main_log_file.open("a", encoding="utf-8") as handle:
+        handle.write("THIS IS NOT JSON\n")
+        handle.write(json.dumps({"event": "unknown_event_type"}) + "\n")
+        handle.write(
+            json.dumps({"event": "request", "messages": "not-a-list"}) + "\n",
+        )
+
+    assistant_msg = AssistantMessage(content="Valid reply", tool_calls=())
+    store.log("response", message_to_dto(assistant_msg))
+
+    with caplog.at_level(logging.WARNING):
+        messages = store.read_messages()
+
+    assert user_msg in messages
+    assert assistant_msg in messages
+    assert any(
+        "corrupt" in rec.message.lower() or "skip" in rec.message.lower()
+        for rec in caplog.records
+    )
+
+
+def test_session_store_write_read_roundtrip(tmp_path: Path) -> None:
+    """Full roundtrip logging turns to SessionStore and reading back."""
+    workspace = tmp_path / "roundtrip-proj"
+    workspace.mkdir()
+    sessions_root = tmp_path / "sessions-root"
+
+    store = SessionStore.create(workspace, sessions_root=sessions_root)
+    store.ensure_header()
+
+    sys_msg = SystemMessage(content="System prompt")
+    u1 = UserMessage(content="User query 1")
+    tc1 = ToolCall(id="c1", name="glob", arguments='{"pattern": "*.py"}')
+    a1 = AssistantMessage(content="Let me check", tool_calls=(tc1,))
+    t1 = ToolMessage(tool_call_id="c1", content="file.py")
+    a2 = AssistantMessage(content="Found file.py", tool_calls=())
+
+    store.log(
+        "request",
+        {"messages": [message_to_dto(sys_msg), message_to_dto(u1)]},
+    )
+    store.log(
+        "response",
+        {"choices": [{"message": message_to_dto(a1)}]},
+    )
+    store.log("tool_result", {"tool_call_id": "c1", "result": "file.py"})
+    store.log(
+        "response",
+        {"choices": [{"message": message_to_dto(a2)}]},
+    )
+
+    loaded_messages = store.read_messages()
+    assert loaded_messages == [sys_msg, u1, a1, t1, a2]
+
+    loaded_rounds = store.read_rounds()
+    assert len(loaded_rounds) == 1
+    assert loaded_rounds[0].user == u1
+    assert loaded_rounds[0].turns == (a1, t1, a2)
