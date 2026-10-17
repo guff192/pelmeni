@@ -1,56 +1,24 @@
-"""Project-scoped session directory hierarchy and session log management."""
+"""Project-scoped session directory hierarchy and session log storage."""
 
 from __future__ import annotations
 
 import json
-import re
 import time
 import uuid
 from datetime import UTC, datetime
-from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from pelmeni.domain.agent_types import AgentType
-from pelmeni.dto.session import SessionHeader
+from pelmeni import domain, dto
+from pelmeni.session.paths import (
+    MAIN_LOG_NAME,
+    SUBAGENTS_DIR_NAME,
+    derive_session_path,
+)
 
-DEFAULT_SESSIONS_ROOT = Path.home() / ".pelmeni" / "sessions"
-_MAIN_LOG_NAME = "main.jsonl"
-_SUBAGENTS_DIR_NAME = "subagents"
 _SHORT_HASH_LEN = 8
 _UTF8 = "utf-8"
-
-
-def slugify_workspace(workspace: Path) -> str:
-    """Derive a clean, URL/file-safe alphanumeric slug for a workspace path."""
-    name = workspace.resolve().name
-    if not name:
-        return "root"
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip().lower())
-    slug = slug.strip("-")
-    return slug or "workspace"
-
-
-def _generate_session_id(project_slug: str) -> str:
-    timestamp_prefix = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
-    random_entropy = f"{time.time()}-{uuid.uuid4()}"
-    digest = sha256(random_entropy.encode()).hexdigest()[:_SHORT_HASH_LEN]
-    return f"{timestamp_prefix}_{project_slug}_{digest}"
-
-
-def derive_session_path(
-    workspace: Path,
-    sessions_root: Path | None = None,
-) -> tuple[Path, str, str]:
-    """Derive the project session directory path, project slug, and session ID.
-
-    Format: <sessions_root>/<project>/<timestamp>_<slug>_<hash>/
-    """
-    root = sessions_root or DEFAULT_SESSIONS_ROOT
-    project_slug = slugify_workspace(workspace)
-    session_id = _generate_session_id(project_slug)
-    session_dir = root / project_slug / session_id
-    return session_dir, project_slug, session_id
+_EVENT_KEY = "event"
 
 
 class SubagentLogger:
@@ -63,13 +31,14 @@ class SubagentLogger:
     def log(self, event: str, trace_data: dict[str, Any] | None = None) -> None:
         """Append an event record to the subagent JSONL log file."""
         record_data = trace_data or {}
+        event_dict: dict[str, Any] = {
+            "ts": time.time(),
+            "agent_type": self.agent_type,
+            _EVENT_KEY: event,
+        }
+        event_dict.update(record_data)
         line = json.dumps(
-            {
-                "ts": time.time(),
-                "agent_type": self.agent_type,
-                "event": event,
-                **record_data,
-            },
+            event_dict,
             ensure_ascii=False,
             default=str,
         )
@@ -95,7 +64,7 @@ def _rewrite_main_header(log_file: Path, header_line: str) -> None:  # noqa: WPS
     temp_file.replace(log_file)
 
 
-class SessionStore:  # noqa: WPS214
+class SessionStore:
     """Manages project-scoped session directory hierarchy and session logs."""
 
     def __init__(
@@ -107,8 +76,8 @@ class SessionStore:  # noqa: WPS214
         self.workspace = workspace
         self.session_id = session_dir.name
         self.project_name = session_dir.parent.name
-        self.main_log_file = self.dir / _MAIN_LOG_NAME
-        self.subagents_dir = self.dir / _SUBAGENTS_DIR_NAME
+        self.main_log_file = self.dir / MAIN_LOG_NAME
+        self.subagents_dir = self.dir / SUBAGENTS_DIR_NAME
 
     @classmethod
     def create(
@@ -122,26 +91,15 @@ class SessionStore:  # noqa: WPS214
             sessions_root=sessions_root,
         )
         session_dir.mkdir(parents=True, exist_ok=True)
-        (session_dir / _SUBAGENTS_DIR_NAME).mkdir(parents=True, exist_ok=True)
-        return cls(session_dir=session_dir, workspace=workspace)
-
-    @classmethod
-    def open(
-        cls,
-        session_dir: Path,
-        workspace: Path | None = None,
-    ) -> SessionStore:
-        """Open an existing session directory."""
-        session_dir.mkdir(parents=True, exist_ok=True)
-        (session_dir / _SUBAGENTS_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (session_dir / SUBAGENTS_DIR_NAME).mkdir(parents=True, exist_ok=True)
         return cls(session_dir=session_dir, workspace=workspace)
 
     def ensure_header(
         self,
-        initial_agent: AgentType = AgentType.REVIEWER,
+        initial_agent: domain.AgentType = domain.AgentType.REVIEWER,
         conversation_id: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> SessionHeader:
+    ) -> dto.SessionHeader:
         """Ensure line-1 header record exists in main.jsonl."""
         existing = self.read_header()
         if existing is not None:
@@ -152,7 +110,7 @@ class SessionStore:  # noqa: WPS214
             if self.workspace
             else str(Path.cwd().resolve())
         )
-        header = SessionHeader(
+        header = dto.SessionHeader(
             session_id=self.session_id,
             workspace=workspace_path,
             created_at=time.time(),
@@ -185,7 +143,7 @@ class SessionStore:  # noqa: WPS214
         )
         _rewrite_main_header(self.main_log_file, header_line)
 
-    def read_header(self) -> SessionHeader | None:
+    def read_header(self) -> dto.SessionHeader | None:
         """Fast O(1) read of line 1 session_header record."""
         if not self.main_log_file.exists():
             return None
@@ -198,14 +156,16 @@ class SessionStore:  # noqa: WPS214
         except json.JSONDecodeError, ValueError:
             return None
         if parsed.get("event") == "session_header":
-            return SessionHeader.model_validate(parsed)
+            return dto.SessionHeader.model_validate(parsed)
         return None
 
     def log(self, event: str, trace_data: dict[str, Any] | None = None) -> None:
         """Append an event record to the primary session log."""
         record_data = trace_data or {}
+        event_dict: dict[str, Any] = {"ts": time.time(), _EVENT_KEY: event}
+        event_dict.update(record_data)
         line = json.dumps(
-            {"ts": time.time(), "event": event, **record_data},
+            event_dict,
             ensure_ascii=False,
             default=str,
         )
@@ -215,12 +175,12 @@ class SessionStore:  # noqa: WPS214
 
     def create_subagent_log(
         self,
-        agent_type: AgentType | str,
+        agent_type: domain.AgentType | str,
     ) -> SubagentLogger:
         """Create an isolated log file for a subagent invocation."""
         agent_name = (
             agent_type.value
-            if isinstance(agent_type, AgentType)
+            if isinstance(agent_type, domain.AgentType)
             else str(agent_type)
         )
         timestamp_part = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -228,3 +188,13 @@ class SessionStore:  # noqa: WPS214
         log_file_name = f"{agent_name}_{timestamp_part}_{short_id}.jsonl"
         log_file = self.subagents_dir / log_file_name
         return SubagentLogger(log_file=log_file, agent_type=agent_name)
+
+
+def open_session(
+    session_dir: Path,
+    workspace: Path | None = None,
+) -> SessionStore:
+    """Open an existing session directory."""
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / SUBAGENTS_DIR_NAME).mkdir(parents=True, exist_ok=True)
+    return SessionStore(session_dir=session_dir, workspace=workspace)

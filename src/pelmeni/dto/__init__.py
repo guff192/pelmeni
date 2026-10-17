@@ -38,4 +38,4 @@ from pelmeni.dto.tools import (  # noqa: F401
     ToolFunction,
     ToolSpec,
 )
-from pelmeni.dto.trace import TraceEvent  # noqa: F401
+from pelmeni.dto.trace import SessionHeader, TraceEvent  # noqa: F401
