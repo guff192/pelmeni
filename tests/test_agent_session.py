@@ -90,7 +90,7 @@ def test_agent_session_initializes_with_profile(
         config=SessionConfig(provider=DummyProvider(), trace=temp_store),
     )
     assert session.profile == test_profile
-    assert session.agent_type == AgentType.BUILDER
+    assert session.profile.agent_type == AgentType.BUILDER
     assert len(session.messages) == 1
     assert isinstance(session.messages[0], SystemMessage)
     assert session.messages[0].content == "You are a builder."
@@ -365,7 +365,7 @@ def test_create_agent_session_factory(
         model_alias="worker",
         config=SessionConfig(provider=DummyProvider(), trace=temp_store),
     )
-    assert session.agent_type == AgentType.BUILDER
+    assert session.profile.agent_type == AgentType.BUILDER
     assert session.profile.model_alias == "worker"
     assert len(session.messages) == 1
     assert isinstance(session.messages[0], SystemMessage)
