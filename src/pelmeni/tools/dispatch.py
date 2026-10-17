@@ -28,12 +28,18 @@ def configure_hooks(chain: HookChain) -> None:
         setattr(tools_mod, "_hook_chain", chain)  # noqa: B010
 
 
-def _run_hooks(tool_call: dict, context: dto.HookContext) -> dict | str:
+def _run_hooks(
+    tool_call: dict,
+    context: dto.HookContext,
+    hook_chain: HookChain | None = None,
+) -> dict | str:
     """Run configured hooks on a tool call."""
-    tools_mod = sys.modules.get("pelmeni.tools")
-    active_chain = _hook_chain
-    if tools_mod is not None:
-        active_chain = getattr(tools_mod, "_hook_chain", _hook_chain)
+    active_chain = hook_chain
+    if active_chain is None:
+        tools_mod = sys.modules.get("pelmeni.tools")
+        active_chain = _hook_chain
+        if tools_mod is not None:
+            active_chain = getattr(tools_mod, "_hook_chain", _hook_chain)
     if active_chain is None:
         return tool_call
     hook_result = active_chain.run(tool_call, context)
@@ -84,6 +90,7 @@ def dispatch(
     tool_call: dict[str, Any],
     context: dto.HookContext,
     registry: reg_module.ToolRegistry | None = None,
+    hook_chain: HookChain | None = None,
 ) -> str:
     """Execute one permitted tool call from the model. Never raises."""
     reg = registry or reg_module.DEFAULT_REGISTRY
@@ -93,7 +100,7 @@ def dispatch(
             f"error: Tool '{tool_name}' is not permitted for role "
             f"'{context.agent_role}'."
         )
-    processed_call = _run_hooks(tool_call, context)
+    processed_call = _run_hooks(tool_call, context, hook_chain=hook_chain)
     if isinstance(processed_call, str):
         return processed_call
     return _execute_call(reg, processed_call)
@@ -101,23 +108,32 @@ def dispatch(
 
 def dispatch_and_append(
     active_messages: list[messages.Message],
-    trace: SessionStore,
+    trace: SessionStore | None,
     call: messages.ToolCall,
-    context: dto.HookContext,
-    registry: reg_module.ToolRegistry,
-) -> dto.HookContext:
+    execution_context: dto.ExecutionContext,
+) -> dto.ExecutionContext:
     """Dispatch a tool call, append ToolMessage, and update context."""
     call_dict = {
         "id": call.id,
         "type": _FUNCTION_KEY,
         _FUNCTION_KEY: {_NAME_KEY: call.name, "arguments": call.arguments},
     }
-    tool_result = dispatch(call_dict, context, registry=registry)
-    trace.log(
-        "tool_result",
-        {"tool_call_id": call.id, "result": tool_result},
+    tool_result = dispatch(
+        call_dict,
+        execution_context.hook_context,
+        registry=execution_context.registry,
+        hook_chain=execution_context.hook_chain,
     )
+    if trace is not None:
+        trace.log(
+            "tool_result",
+            {"tool_call_id": call.id, "result": tool_result},
+        )
     active_messages.append(
         messages.ToolMessage(tool_call_id=call.id, content=tool_result),
     )
-    return replace(context, tool_history=(*context.tool_history, call_dict))
+    updated_hook_context = replace(
+        execution_context.hook_context,
+        tool_history=(*execution_context.hook_context.tool_history, call_dict),
+    )
+    return replace(execution_context, hook_context=updated_hook_context)

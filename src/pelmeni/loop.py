@@ -38,6 +38,10 @@ def run(  # noqa: WPS210
         agent_role=dto.AgentRole.BUILDER,
         session_id="default",
     )
+    exec_ctx = dto.ExecutionContext(
+        hook_context=active_context,
+        registry=active_registry,
+    )
     serialized_tools = active_registry.get_serialized_tools(
         active_context.agent_role,
     )
@@ -92,13 +96,12 @@ def run(  # noqa: WPS210
             return assistant_msg.content or ""
 
         for call in assistant_msg.tool_calls:
-            active_context = tools.dispatch_and_append(
+            exec_ctx = tools.dispatch_and_append(
                 messages,
                 trace,
                 call,
-                active_context,
-                active_registry,
+                exec_ctx,
             )
-
+        active_context = exec_ctx.hook_context
     print(f"error: iteration cap ({MAX_ITERATIONS}) reached", file=sys.stderr)
     return ""

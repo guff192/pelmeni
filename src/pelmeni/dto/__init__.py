@@ -18,7 +18,11 @@ from pelmeni.dto.credentials import (  # noqa: F401
     NoCredentials,
     OAuthCredentials,
 )
-from pelmeni.dto.hooks import HookContext, HookResult  # noqa: F401
+from pelmeni.dto.hooks import (  # noqa: F401
+    ExecutionContext,
+    HookContext,
+    HookResult,
+)
 from pelmeni.dto.messages import (  # noqa: F401
     AssistantMessage,
     Message,
